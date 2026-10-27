@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VALOBOT // Valorant Stacking Hub</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Teko:wght@600;700&family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><polygon points='0,15 70,15 100,85 30,85' fill='%23ff4655'/><polygon points='76,15 96,15 96,35' fill='%23ece8e1'/></svg>">
+</head>
+<body>
+  <!-- Background Accents -->
+  <div class="bg-grid"></div>
+  <div class="bg-glow"></div>
+
+  <!-- Header -->
+  <header class="navbar">
+    <div class="brand">
+      <div class="brand-logo">
+        <svg viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <polygon points="0,15 70,15 100,85 30,85" fill="#ff4655" />
+          <polygon points="76,15 96,15 96,35" fill="#ece8e1" />
+        </svg>
+      </div>
+      <div class="brand-text">
+        <div class="brand-title">VALOBOT <span>// RECRUITMENT</span></div>
+        <div class="brand-sub">VALORANT STACK PROTOCOL &bull; valobot.example.com</div>
+      </div>
+    </div>
+
+    <div class="nav-actions">
+      <div class="status-indicator" id="botStatusBadge">
+        <span class="status-dot"></span>
+        <span class="status-label" id="botStatusText">Connecting...</span>
+      </div>
+
+      <!-- Discord Auth Widget -->
+      <div id="authWidget" class="auth-widget">
+        <a href="/api/auth/login" class="btn btn-secondary btn-sm" id="loginBtn">
+          <span>🎮 Log in with Discord</span>
+        </a>
+      </div>
+
+      <button class="btn btn-primary" id="openCreateModalBtn">
+        <span class="btn-icon">+</span>
+        <span>LAUNCH STACK VOTE</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="main-content">
+    <!-- Hero / Status Banner -->
+    <section class="banner-panel">
+      <div class="banner-left">
+        <div class="banner-tag">// SYSTEM OVERVIEW</div>
+        <h1 class="banner-headline">TEAM RECRUITMENT & STACKING HUB</h1>
+        <p class="banner-desc">
+          Automated team coordinator for 2-stack, 3-stack & 5-stack parties.
+          Protected by Discord authentication and permissions: only authorized members can initiate votes in their respective channels.
+        </p>
+      </div>
+      <div class="banner-stats">
+        <div class="stat-card">
+          <div class="stat-value" id="activeSessionsCount">0</div>
+          <div class="stat-label">ACTIVE SESSIONS</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="totalVotesCount">0</div>
+          <div class="stat-label">TOTAL VOTES</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="botGuildsCount">-</div>
+          <div class="stat-label">DISCORD GUILDS</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Sessions Section -->
+    <section class="sessions-section">
+      <div class="section-header">
+        <div class="section-title">
+          <span class="prefix">//</span> LIVE STACKING SESSIONS
+        </div>
+        <div class="section-controls">
+          <button class="btn btn-secondary btn-sm" id="loadDemoBtn">
+            <span>✨ Load Demo Session</span>
+          </button>
+          <button class="btn btn-secondary btn-sm" id="refreshSessionsBtn">
+            <span>🔄 Refresh</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Sessions Feed -->
+      <div class="sessions-grid" id="sessionsList">
+        <!-- Rendered dynamically -->
+      </div>
+
+      <div class="empty-state" id="emptyState" style="display: none;">
+        <div class="empty-icon">🛡️</div>
+        <h3>NO ACTIVE SESSIONS</h3>
+        <p>No Valorant stacks are recruiting right now. Use <code>/valo</code> in Discord or click the button below to start one!</p>
+        <button class="btn btn-primary" id="emptyCreateBtn">LAUNCH STACK VOTE</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- Launch Session Modal -->
+  <div class="modal-backdrop" id="createModal" style="display: none;">
+    <div class="modal-card">
+      <div class="modal-header">
+        <div class="modal-tag">// SENDER UI</div>
+        <h2 class="modal-title">LAUNCH VALORANT STACK VOTE</h2>
+        <button class="modal-close" id="closeCreateModalBtn">&times;</button>
+      </div>
+
+      <!-- Auth Warning Banner if user is not logged in -->
+      <div id="loginRequiredNotice" class="login-notice" style="display: none;">
+        <span class="notice-icon">🔒</span>
+        <div>
+          <strong>Discord Authentication Required</strong>
+          <p>You must log in with your Discord account to see servers and channels where you have posting permissions.</p>
+          <a href="/api/auth/login" class="btn btn-primary btn-sm" style="margin-top: 0.5rem;">
+            <span>Log in with Discord</span>
+          </a>
+        </div>
+      </div>
+
+      <form id="createSessionForm" class="modal-form">
+        <!-- Target Guild & Channel (Filtered by user permissions) -->
+        <div class="form-row">
+          <div class="form-group col-6">
+            <label class="form-label" for="channelSelect">DISCORD CHANNEL *</label>
+            <select id="channelSelect" class="form-input" required>
+              <option value="">-- Log in to view your channels --</option>
+            </select>
+          </div>
+
+          <div class="form-group col-6">
+            <label class="form-label" for="roleSelect">TARGET MENTION ROLE</label>
+            <select id="roleSelect" class="form-input">
+              <option value="">Channel (No ping)</option>
+              <option value="everyone">@everyone</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Party Size Selector -->
+        <div class="form-group">
+          <label class="form-label">TARGET STACK SIZE</label>
+          <div class="size-selector">
+            <label class="size-option">
+              <input type="radio" name="partySize" value="5" checked>
+              <div class="size-box">
+                <span class="size-num">5</span>
+                <span class="size-text">Full Stack</span>
+              </div>
+            </label>
+            <label class="size-option">
+              <input type="radio" name="partySize" value="3">
+              <div class="size-box">
+                <span class="size-num">3</span>
+                <span class="size-text">Trio</span>
+              </div>
+            </label>
+            <label class="size-option">
+              <input type="radio" name="partySize" value="2">
+              <div class="size-box">
+                <span class="size-num">2</span>
+                <span class="size-text">Duo</span>
+              </div>
+            </label>
+          </div>
+        </div>
+
+        <!-- Match Start Time & Vote Deadline -->
+        <div class="form-row">
+          <div class="form-group col-6">
+            <label class="form-label" for="partyTimeInput">MATCH START TIME *</label>
+            <input type="text" id="partyTimeInput" class="form-input" placeholder="e.g. 21:00 or in 1h" required>
+            <div class="quick-chips">
+              <button type="button" class="chip" data-target="partyTimeInput" data-val="in 30m">+30m</button>
+              <button type="button" class="chip" data-target="partyTimeInput" data-val="in 1h">+1h</button>
+              <button type="button" class="chip" data-target="partyTimeInput" data-val="21:00">21:00</button>
+              <button type="button" class="chip" data-target="partyTimeInput" data-val="21:30">21:30</button>
+            </div>
+          </div>
+
+          <div class="form-group col-6">
+            <label class="form-label" for="voteDeadlineInput">VOTE DEADLINE (ENDS)</label>
+            <input type="text" id="voteDeadlineInput" class="form-input" placeholder="e.g. 20:30 or 15m before">
+            <div class="quick-chips">
+              <button type="button" class="chip" data-target="voteDeadlineInput" data-val="15m before">15m before</button>
+              <button type="button" class="chip" data-target="voteDeadlineInput" data-val="30m before">30m before</button>
+              <button type="button" class="chip" data-target="voteDeadlineInput" data-val="in 15m">+15m</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Game Mode & Sanitized Title Note -->
+        <div class="form-group">
+          <label class="form-label" for="noteInput">GAME MODE / TITLE NOTE (MAX 50 CHARS)</label>
+          <input type="text" id="noteInput" class="form-input" placeholder="e.g. Ranked Ascendant Grind, Swiftplay, Premier" maxlength="50" required value="Competitive 5-Stack">
+          <div class="quick-chips" style="margin-top: 0.4rem;">
+            <button type="button" class="chip" data-target="noteInput" data-val="Competitive / Ranked">Ranked</button>
+            <button type="button" class="chip" data-target="noteInput" data-val="Premier Match">Premier</button>
+            <button type="button" class="chip" data-target="noteInput" data-val="Chill Unrated">Unrated</button>
+            <button type="button" class="chip" data-target="noteInput" data-val="Swiftplay Chill">Swiftplay</button>
+            <button type="button" class="chip" data-target="noteInput" data-val="Custom 5v5 Scrim">Custom 5v5</button>
+          </div>
+          <span class="form-hint">Mentions like @everyone or user tags are strictly blocked to prevent spam.</span>
+        </div>
+
+        <div class="modal-footer">
+          <button type="button" class="btn btn-secondary" id="cancelModalBtn">Cancel</button>
+          <button type="submit" class="btn btn-primary" id="submitCreateBtn">
+            <span>🚀 INITIATE PROTOCOL</span>
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Toast Notifications -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- Scripts -->
+  <script src="/js/app.js"></script>
+</body>
+</html>

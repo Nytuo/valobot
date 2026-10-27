@@ -1,0 +1,23 @@
+services:
+  valobot:
+    build:
+      context: .
+      args:
+        PORT: ${PORT:-3000}
+    container_name: valobot
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:${PORT:-3000}"
+    env_file:
+      - .env
+    environment:
+      - NODE_ENV=production
+      - PORT=${PORT:-3000}
+    volumes:
+      - ./data:/app/data
+    networks:
+      - proxy-nw
+
+networks:
+  proxy-nw:
+    external: true

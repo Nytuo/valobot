@@ -1,0 +1,369 @@
+const { EventEmitter } = require('events');
+const { loadSessions, saveSessions } = require('./storage');
+
+class SessionManager extends EventEmitter {
+  constructor() {
+    super();
+    this.sessions = loadSessions();
+    this.timers = new Map();
+    this.restoreTimers();
+  }
+
+  // Parse human time strings like "21:00", "21h30", "22h", "in 30m", "in 1h"
+  parseTimeString(timeStr, baseDate = new Date()) {
+    if (!timeStr) return null;
+    timeStr = timeStr.trim().toLowerCase();
+
+    // Relative format: "in 45m", "in 2h", "+30m"
+    const relMatch = timeStr.match(/^(?:in\s+|\+)?(\d+)\s*(m|min|mins|h|hr|hours)?$/i);
+    if (relMatch) {
+      const val = parseInt(relMatch[1], 10);
+      const unit = relMatch[2] ? relMatch[2].toLowerCase() : 'm';
+      const ms = unit.startsWith('h') ? val * 60 * 60 * 1000 : val * 60 * 1000;
+      return new Date(baseDate.getTime() + ms);
+    }
+
+    // HH:MM or HHhMM or HHh format: e.g. 21:00, 21h30, 21h, 9:30pm
+    const timeMatch = timeStr.match(/^(\d{1,2})[:h](\d{2})?(?:\s*(am|pm))?$/i) ||
+                      timeStr.match(/^(\d{1,2})(?:h)?(?:\s*(am|pm))?$/i);
+
+    if (timeMatch) {
+      let hours = parseInt(timeMatch[1], 10);
+      const minutes = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
+      const meridiem = (timeMatch[3] || '').toLowerCase();
+
+      if (meridiem === 'pm' && hours < 12) hours += 12;
+      if (meridiem === 'am' && hours === 12) hours = 0;
+
+      const target = new Date(baseDate);
+      target.setHours(hours, minutes, 0, 0);
+
+      // If the target time is in the past by more than 30 minutes, assume tomorrow
+      if (target.getTime() < baseDate.getTime() - 30 * 60 * 1000) {
+        target.setDate(target.getDate() + 1);
+      }
+      return target;
+    }
+
+    // ISO timestamp or standard date parse
+    const parsed = new Date(timeStr);
+    if (!isNaN(parsed.getTime())) {
+      return parsed;
+    }
+
+    return null;
+  }
+
+  // Calculate default deadline: 15 minutes before party time or half the remaining time
+  computeDeadline(partyDate, deadlineStr, baseDate = new Date()) {
+    if (deadlineStr) {
+      // Check for offset syntax like "15m before", "30m before"
+      const beforeMatch = deadlineStr.match(/^(\d+)\s*(m|min|mins|h)?\s*before$/i);
+      if (beforeMatch) {
+        const val = parseInt(beforeMatch[1], 10);
+        const unit = beforeMatch[2] ? beforeMatch[2].toLowerCase() : 'm';
+        const ms = unit.startsWith('h') ? val * 60 * 60 * 1000 : val * 60 * 1000;
+        return new Date(partyDate.getTime() - ms);
+      }
+
+      const parsed = this.parseTimeString(deadlineStr, baseDate);
+      if (parsed) {
+        // Ensure deadline is not already in the past if party is in the future
+        if (parsed.getTime() > baseDate.getTime() && parsed.getTime() < partyDate.getTime()) {
+          return parsed;
+        }
+      }
+    }
+
+    // Default: 15 minutes before party, or if less than 30 min away, halfway between now and party
+    const diff = partyDate.getTime() - baseDate.getTime();
+    if (diff > 30 * 60 * 1000) {
+      return new Date(partyDate.getTime() - 15 * 60 * 1000);
+    } else if (diff > 0) {
+      return new Date(baseDate.getTime() + Math.floor(diff * 0.7));
+    } else {
+      return new Date(partyDate.getTime());
+    }
+  }
+
+  createSession(options) {
+    const id = options.id || `valo_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
+    const now = new Date();
+
+    const partyDate = options.partyTimestamp ?
+      new Date(options.partyTimestamp) :
+      (this.parseTimeString(options.partyTime, now) || new Date(now.getTime() + 60 * 60 * 1000));
+
+    const deadlineDate = options.voteDeadlineTimestamp ?
+      new Date(options.voteDeadlineTimestamp) :
+      this.computeDeadline(partyDate, options.voteDeadline, now);
+
+    const partySize = [2, 3, 5].includes(Number(options.partySize)) ? Number(options.partySize) : 5;
+
+    const session = {
+      id,
+      guildId: options.guildId || null,
+      channelId: options.channelId || null,
+      messageId: options.messageId || null,
+      creator: {
+        id: options.creator?.id || 'sender_1',
+        username: options.creator?.username || 'Sender',
+        displayName: options.creator?.displayName || options.creator?.username || 'Sender',
+        avatar: options.creator?.avatar || null
+      },
+      note: options.note || 'Competitive 5-Stack',
+      partySize,
+      targetRole: {
+        id: options.targetRoleId || 'everyone',
+        name: options.targetRoleName || '@everyone'
+      },
+      targetMemberIds: options.targetMemberIds || [],
+      partyTime: partyDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      partyTimestamp: partyDate.getTime(),
+      voteDeadline: deadlineDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      voteDeadlineTimestamp: deadlineDate.getTime(),
+      createdAt: now.getTime(),
+      status: 'active', // 'active' | 'locked' | 'cancelled'
+      cancelledBy: null,
+      cancelledAt: null,
+      votes: {},
+      history: []
+    };
+
+    // Auto-vote sender as "sure" (sender can change or remove vote later)
+    session.votes[session.creator.id] = {
+      userId: session.creator.id,
+      username: session.creator.username,
+      displayName: session.creator.displayName,
+      avatar: session.creator.avatar,
+      status: 'sure',
+      timestamp: now.getTime()
+    };
+
+    session.history.push({
+      action: 'created',
+      userId: session.creator.id,
+      timestamp: now.getTime()
+    });
+
+    this.sessions[id] = session;
+    this.persist();
+    this.scheduleDeadline(session);
+    this.emit('sessionCreated', session);
+
+    return session;
+  }
+
+  getSession(id) {
+    return this.sessions[id] || null;
+  }
+
+  getAllSessions() {
+    return Object.values(this.sessions);
+  }
+
+  getActiveSessions() {
+    return Object.values(this.sessions)
+      .filter(s => s.status === 'active')
+      .sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  castVote(sessionId, user, voteType, meta = {}) {
+    const session = this.sessions[sessionId];
+    if (!session) throw new Error('Session not found');
+    if (session.status !== 'active') throw new Error(`Cannot vote on a ${session.status} session`);
+
+    const now = Date.now();
+    const validVotes = ['sure', 'maybe', 'if_last', 'backup', 'no', 'remove'];
+    if (!validVotes.includes(voteType)) {
+      throw new Error(`Invalid vote type: ${voteType}`);
+    }
+
+    if (voteType === 'remove') {
+      if (session.votes[user.id]) {
+        delete session.votes[user.id];
+        session.history.push({
+          action: 'vote_removed',
+          userId: user.id,
+          timestamp: now
+        });
+      }
+    } else {
+      session.votes[user.id] = {
+        userId: user.id,
+        username: user.username,
+        displayName: user.displayName || user.username,
+        avatar: user.avatar || null,
+        status: voteType,
+        timestamp: now
+      };
+      session.history.push({
+        action: 'voted',
+        userId: user.id,
+        vote: voteType,
+        timestamp: now
+      });
+    }
+
+    this.persist();
+    this.emit('sessionUpdated', session, { user, voteType, ...meta });
+    return session;
+  }
+
+  cancelSession(sessionId, cancelledByUser) {
+    const session = this.sessions[sessionId];
+    if (!session) throw new Error('Session not found');
+    if (session.status === 'cancelled') return session;
+
+    session.status = 'cancelled';
+    session.cancelledAt = Date.now();
+    session.cancelledBy = {
+      id: cancelledByUser?.id || 'admin',
+      username: cancelledByUser?.username || 'Admin',
+      displayName: cancelledByUser?.displayName || cancelledByUser?.username || 'Admin'
+    };
+
+    session.history.push({
+      action: 'cancelled',
+      userId: session.cancelledBy.id,
+      timestamp: session.cancelledAt
+    });
+
+    if (this.timers.has(sessionId)) {
+      clearTimeout(this.timers.get(sessionId));
+      this.timers.delete(sessionId);
+    }
+
+    this.persist();
+    this.emit('sessionCancelled', session);
+    return session;
+  }
+
+  lockSession(sessionId) {
+    const session = this.sessions[sessionId];
+    if (!session) return null;
+    if (session.status !== 'active') return session;
+
+    session.status = 'locked';
+    session.lockedAt = Date.now();
+    session.history.push({
+      action: 'locked_deadline',
+      timestamp: session.lockedAt
+    });
+
+    if (this.timers.has(sessionId)) {
+      clearTimeout(this.timers.get(sessionId));
+      this.timers.delete(sessionId);
+    }
+
+    this.persist();
+    this.emit('sessionLocked', session);
+    return session;
+  }
+
+  calculateRosters(session) {
+    const partySize = session.partySize || 5;
+    const votesList = Object.values(session.votes || {});
+
+    // Categorize votes
+    const sureVotes = votesList.filter(v => v.status === 'sure').sort((a, b) => a.timestamp - b.timestamp);
+    const ifLastVotes = votesList.filter(v => v.status === 'if_last').sort((a, b) => a.timestamp - b.timestamp);
+    const backupVotes = votesList.filter(v => v.status === 'backup').sort((a, b) => a.timestamp - b.timestamp);
+    const maybeVotes = votesList.filter(v => v.status === 'maybe').sort((a, b) => a.timestamp - b.timestamp);
+    const noVotes = votesList.filter(v => v.status === 'no').sort((a, b) => a.timestamp - b.timestamp);
+
+    // Stacking allocation
+    const teams = [];
+    const usedUserIds = new Set();
+    const backupQueue = [];
+
+    // How many full teams can we make purely from 'sure' players?
+    let remainingSure = [...sureVotes];
+
+    while (remainingSure.length >= partySize) {
+      const fullTeam = remainingSure.splice(0, partySize);
+      fullTeam.forEach(p => usedUserIds.add(p.userId));
+      teams.push(fullTeam);
+    }
+
+    // Now handle remaining sure players (fewer than partySize)
+    if (remainingSure.length > 0) {
+      const teamNumber = teams.length + 1;
+      const currentTeam = [...remainingSure];
+      currentTeam.forEach(p => usedUserIds.add(p.userId));
+
+      // Can we complete this team with "if a last" players?
+      // "If a last" players join specifically if needed to complete the stack!
+      const neededCount = partySize - currentTeam.length;
+      if (neededCount === 1 && ifLastVotes.length > 0) {
+        // Exactly 1 needed, and we have an "if a last" player ready!
+        const filler = ifLastVotes.find(v => !usedUserIds.has(v.userId));
+        if (filler) {
+          currentTeam.push(filler);
+          usedUserIds.add(filler.userId);
+        }
+      }
+
+      teams.push(currentTeam);
+    }
+
+    // Remaining 'sure' that couldn't be placed (if any), 'if_last' not used, and 'backup'
+    const unusedIfLast = ifLastVotes.filter(v => !usedUserIds.has(v.userId));
+    const allBackups = [...backupVotes, ...unusedIfLast];
+
+    // Didn't respond (from targetMemberIds if provided)
+    const targetMemberIds = session.targetMemberIds || [];
+    const unresponsiveIds = targetMemberIds.filter(id => !session.votes[id]);
+
+    return {
+      teams,
+      team1: teams[0] || [],
+      team2: teams[1] || [],
+      additionalTeams: teams.slice(2),
+      backups: allBackups,
+      maybes: maybeVotes,
+      declined: noVotes,
+      ifLastUnassigned: unusedIfLast,
+      unresponsive: unresponsiveIds,
+      totalVotes: votesList.length,
+      partySize
+    };
+  }
+
+  scheduleDeadline(session) {
+    if (session.status !== 'active') return;
+    const now = Date.now();
+    const msUntilDeadline = session.voteDeadlineTimestamp - now;
+
+    if (this.timers.has(session.id)) {
+      clearTimeout(this.timers.get(session.id));
+      this.timers.delete(session.id);
+    }
+
+    if (msUntilDeadline <= 0) {
+      // Already expired
+      this.lockSession(session.id);
+    } else {
+      const timer = setTimeout(() => {
+        this.lockSession(session.id);
+      }, msUntilDeadline);
+      this.timers.set(session.id, timer);
+    }
+  }
+
+  restoreTimers() {
+    for (const session of Object.values(this.sessions)) {
+      if (session.status === 'active') {
+        this.scheduleDeadline(session);
+      }
+    }
+  }
+
+  persist() {
+    saveSessions(this.sessions);
+  }
+}
+
+// Singleton instance
+const sessionManager = new SessionManager();
+module.exports = sessionManager;
