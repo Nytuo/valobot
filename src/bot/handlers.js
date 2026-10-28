@@ -519,6 +519,60 @@ async function sendChannelReminder(client, session, config = {}) {
   }
 }
 
+async function handleAutocomplete(interaction) {
+  try {
+    const focused = interaction.options.getFocused(true);
+    const query = (focused.value || '').toLowerCase().trim();
+
+    if (focused.name === 'party_time') {
+      const presets = [
+        { name: 'now (Start match immediately)', value: 'now' },
+        { name: 'in 15m (+15 minutes from now)', value: 'in 15m' },
+        { name: 'in 30m (+30 minutes from now)', value: 'in 30m' },
+        { name: 'in 45m (+45 minutes from now)', value: 'in 45m' },
+        { name: 'in 1h (+1 hour from now)', value: 'in 1h' },
+        { name: 'in 2h (+2 hours from now)', value: 'in 2h' },
+        { name: '19:00 (Today at 19:00)', value: '19:00' },
+        { name: '20:00 (Today at 20:00)', value: '20:00' },
+        { name: '20:30 (Today at 20:30)', value: '20:30' },
+        { name: '21:00 (Today at 21:00 - Prime time)', value: '21:00' },
+        { name: '21:30 (Today at 21:30)', value: '21:30' },
+        { name: '22:00 (Today at 22:00)', value: '22:00' },
+        { name: '22:30 (Today at 22:30)', value: '22:30' },
+        { name: '23:00 (Today at 23:00)', value: '23:00' },
+        { name: 'tomorrow 20:00 (Tomorrow at 20:00)', value: 'tomorrow 20:00' },
+        { name: 'tomorrow 21:00 (Tomorrow at 21:00)', value: 'tomorrow 21:00' },
+        { name: 'tomorrow 22:00 (Tomorrow at 22:00)', value: 'tomorrow 22:00' }
+      ];
+
+      const filtered = query
+        ? presets.filter(p => p.name.toLowerCase().includes(query) || p.value.toLowerCase().includes(query))
+        : presets;
+
+      await interaction.respond(filtered.slice(0, 25));
+    } else if (focused.name === 'vote_deadline') {
+      const presets = [
+        { name: '15m before (Default - 15 mins prior to match)', value: '15m before' },
+        { name: '5m before (5 mins prior to match)', value: '5m before' },
+        { name: '10m before (10 mins prior to match)', value: '10m before' },
+        { name: '30m before (30 mins prior to match)', value: '30m before' },
+        { name: '45m before (45 mins prior to match)', value: '45m before' },
+        { name: '1h before (1 hour prior to match)', value: '1h before' },
+        { name: 'in 15m (+15 mins from now)', value: 'in 15m' },
+        { name: 'in 30m (+30 mins from now)', value: 'in 30m' }
+      ];
+
+      const filtered = query
+        ? presets.filter(p => p.name.toLowerCase().includes(query) || p.value.toLowerCase().includes(query))
+        : presets;
+
+      await interaction.respond(filtered.slice(0, 25));
+    }
+  } catch (err) {
+    console.error('Error handling autocomplete:', err);
+  }
+}
+
 module.exports = {
   handleCommand,
   handleModalSubmit,
@@ -526,5 +580,6 @@ module.exports = {
   updateDiscordMessage,
   sendChannelReminder,
   getUnresponsiveChannelMembers,
-  parsePingSettingsInput
+  parsePingSettingsInput,
+  handleAutocomplete
 };

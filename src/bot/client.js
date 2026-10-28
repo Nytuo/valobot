@@ -1,6 +1,6 @@
 const { Client, GatewayIntentBits, REST, Routes } = require('discord.js');
 const { commands } = require('./commands');
-const { handleCommand, handleModalSubmit, handleButton, updateDiscordMessage, sendChannelReminder } = require('./handlers');
+const { handleCommand, handleModalSubmit, handleButton, updateDiscordMessage, sendChannelReminder, handleAutocomplete } = require('./handlers');
 const sessionManager = require('../services/sessionManager');
 
 function createDiscordBot(config) {
@@ -65,6 +65,11 @@ function createDiscordBot(config) {
   // Interaction Router
   client.on('interactionCreate', async (interaction) => {
     try {
+      if (interaction.isAutocomplete()) {
+        await handleAutocomplete(interaction);
+        return;
+      }
+
       if (interaction.isChatInputCommand()) {
         const cmdName = interaction.commandName;
         if (['valo', 'valorant', 'youwanttoplay'].includes(cmdName)) {

@@ -594,29 +594,13 @@ document.querySelectorAll('.chip').forEach(chip => {
       }
     } else if (targetId) {
       const el = document.getElementById(targetId);
-      if (el) el.value = val;
+      if (el) {
+        el.value = val;
+        el.dispatchEvent(new Event('input'));
+      }
     }
   });
 });
-
-// Combobox custom input revealers
-const partyTimeSelect = document.getElementById('partyTimeSelect');
-const partyTimeCustomInput = document.getElementById('partyTimeCustomInput');
-if (partyTimeSelect && partyTimeCustomInput) {
-  partyTimeSelect.addEventListener('change', () => {
-    partyTimeCustomInput.style.display = partyTimeSelect.value === 'custom' ? 'block' : 'none';
-    if (partyTimeSelect.value === 'custom') partyTimeCustomInput.focus();
-  });
-}
-
-const voteDeadlineSelect = document.getElementById('voteDeadlineSelect');
-const voteDeadlineCustomInput = document.getElementById('voteDeadlineCustomInput');
-if (voteDeadlineSelect && voteDeadlineCustomInput) {
-  voteDeadlineSelect.addEventListener('change', () => {
-    voteDeadlineCustomInput.style.display = voteDeadlineSelect.value === 'custom' ? 'block' : 'none';
-    if (voteDeadlineSelect.value === 'custom') voteDeadlineCustomInput.focus();
-  });
-}
 
 // Form Submission
 createSessionForm.addEventListener('submit', async (e) => {
@@ -638,16 +622,8 @@ createSessionForm.addEventListener('submit', async (e) => {
   }
 
   const partySize = document.querySelector('input[name="partySize"]:checked').value;
-  
-  let partyTime = partyTimeSelect?.value || '21:00';
-  if (partyTime === 'custom') {
-    partyTime = partyTimeCustomInput?.value.trim() || '21:00';
-  }
-
-  let voteDeadline = voteDeadlineSelect?.value || '15m before';
-  if (voteDeadline === 'custom') {
-    voteDeadline = voteDeadlineCustomInput?.value.trim() || '15m before';
-  }
+  const partyTime = document.getElementById('partyTimeInput').value.trim() || '21:00';
+  const voteDeadline = document.getElementById('voteDeadlineInput').value.trim() || '15m before';
 
   const roleSelectEl = document.getElementById('roleSelect');
   const targetRoleId = roleSelectEl.value || null;
@@ -658,23 +634,37 @@ createSessionForm.addEventListener('submit', async (e) => {
 
   // Parse party time in user's browser local time to prevent server/client timezone discrepancies
   let partyTimestamp = null;
-  const relMatch = partyTime.match(/^(?:in\s+|\+)?(\d+)\s*(m|min|mins|h|hr|hours)?$/i);
-  if (relMatch) {
-    const val = parseInt(relMatch[1], 10);
-    const unit = relMatch[2] ? relMatch[2].toLowerCase() : 'm';
-    partyTimestamp = Date.now() + (unit.startsWith('h') ? val * 3600000 : val * 60000);
+  if (partyTime.toLowerCase() === 'now') {
+    partyTimestamp = Date.now();
   } else {
-    const m = partyTime.match(/^(\d{1,2})[:h](\d{2})?(?:\s*(am|pm))?$/i);
-    if (m) {
-      let h = parseInt(m[1], 10);
-      const mins = m[2] ? parseInt(m[2], 10) : 0;
-      const ampm = (m[3] || '').toLowerCase();
-      if (ampm === 'pm' && h < 12) h += 12;
-      if (ampm === 'am' && h === 12) h = 0;
-      const d = new Date();
-      d.setHours(h, mins, 0, 0);
-      if (d.getTime() < Date.now() - 30 * 60 * 1000) d.setDate(d.getDate() + 1);
-      partyTimestamp = d.getTime();
+    const relMatch = partyTime.match(/^(?:in\s+|\+)?(\d+)\s*(m|min|mins|h|hr|hours)?$/i);
+    if (relMatch) {
+      const val = parseInt(relMatch[1], 10);
+      const unit = relMatch[2] ? relMatch[2].toLowerCase() : 'm';
+      partyTimestamp = Date.now() + (unit.startsWith('h') ? val * 3600000 : val * 60000);
+    } else {
+      let dayOffset = 0;
+      let cleanTime = partyTime;
+      const tmMatch = partyTime.match(/^(?:tomorrow|demain)(?:\s+(?:at\s+)?(.*))?$/i);
+      if (tmMatch) {
+        dayOffset = 1;
+        cleanTime = tmMatch[1] ? tmMatch[1].trim() : '21:00';
+      }
+      const m = cleanTime.match(/^(\d{1,2})[:h](\d{2})?(?:\s*(am|pm))?$/i);
+      if (m) {
+        let h = parseInt(m[1], 10);
+        const mins = m[2] ? parseInt(m[2], 10) : 0;
+        const ampm = (m[3] || '').toLowerCase();
+        if (ampm === 'pm' && h < 12) h += 12;
+        if (ampm === 'am' && h === 12) h = 0;
+        const d = new Date();
+        d.setDate(d.getDate() + dayOffset);
+        d.setHours(h, mins, 0, 0);
+        if (dayOffset === 0 && d.getTime() < Date.now() - 30 * 60 * 1000) {
+          d.setDate(d.getDate() + 1);
+        }
+        partyTimestamp = d.getTime();
+      }
     }
   }
 

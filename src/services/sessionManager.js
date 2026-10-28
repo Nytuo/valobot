@@ -15,6 +15,17 @@ const TZ_OFFSETS = {
   PST: -480, PDT: -420
 };
 
+// Weekday names mapping
+const DAYS_OF_WEEK = {
+  sunday: 0, sun: 0, dimanche: 0,
+  monday: 1, mon: 1, lundi: 1,
+  tuesday: 2, tue: 2, mardi: 2,
+  wednesday: 3, wed: 3, mercredi: 3,
+  thursday: 4, thu: 4, jeudi: 4,
+  friday: 5, fri: 5, vendredi: 5,
+  saturday: 6, sat: 6, samedi: 6
+};
+
 // Helper to parse reminder prior strings (e.g. "30m", "15m", "1h", "off") into minutes
 function parseReminderMinutes(str) {
   if (!str) return 30;
@@ -65,21 +76,53 @@ class SessionManager extends EventEmitter {
     return purgedCount;
   }
 
-  // Parse human time strings like "21:00", "21h30", "21:00 CET", "in 30m", "in 1h"
+  // Parse human time strings like "now", "21:00", "14:00", "tomorrow 20h", "friday 21:00", "in 1h"
   parseTimeString(timeStr, baseDate = new Date()) {
     if (!timeStr) return null;
     timeStr = timeStr.trim();
 
-    // Relative format: "in 45m", "in 2h", "+30m"
+    // 0. "now" format
+    if (timeStr.toLowerCase() === 'now') {
+      return new Date(baseDate.getTime());
+    }
+
+    let dayOffset = 0;
+
+    // 1. Check for future day prefixes: "tomorrow", "demain", "in X days", "friday", etc.
+    const tomorrowMatch = timeStr.match(/^(?:tomorrow|demain)(?:\s+(?:at\s+)?(.*))?$/i);
+    if (tomorrowMatch) {
+      dayOffset = 1;
+      timeStr = tomorrowMatch[1] ? tomorrowMatch[1].trim() : '21:00';
+    } else {
+      const inDaysMatch = timeStr.match(/^in\s+(\d+)\s*days?(?:\s+(?:at\s+)?(.*))?$/i);
+      if (inDaysMatch) {
+        dayOffset = parseInt(inDaysMatch[1], 10);
+        timeStr = inDaysMatch[2] ? inDaysMatch[2].trim() : '21:00';
+      } else {
+        const dayMatch = timeStr.match(/^([a-zA-Z]+)(?:\s+(?:at\s+)?(.*))?$/i);
+        if (dayMatch && DAYS_OF_WEEK[dayMatch[1].toLowerCase()] !== undefined) {
+          const targetDay = DAYS_OF_WEEK[dayMatch[1].toLowerCase()];
+          const currentDay = baseDate.getDay();
+          let diff = targetDay - currentDay;
+          if (diff <= 0) diff += 7; // next occurrence of this weekday
+          dayOffset = diff;
+          timeStr = dayMatch[2] ? dayMatch[2].trim() : '21:00';
+        }
+      }
+    }
+
+    const workingBase = new Date(baseDate.getTime() + dayOffset * 24 * 60 * 60 * 1000);
+
+    // 2. Relative format: "in 45m", "in 2h", "+30m"
     const relMatch = timeStr.match(/^(?:in\s+|\+)?(\d+)\s*(m|min|mins|h|hr|hours)?$/i);
-    if (relMatch) {
+    if (relMatch && dayOffset === 0) {
       const val = parseInt(relMatch[1], 10);
       const unit = relMatch[2] ? relMatch[2].toLowerCase() : 'm';
       const ms = unit.startsWith('h') ? val * 60 * 60 * 1000 : val * 60 * 1000;
       return new Date(baseDate.getTime() + ms);
     }
 
-    // HH:MM or HHhMM format with optional meridiem and timezone (e.g. "21:00", "21h00", "21:00 CET", "9:30pm EST")
+    // 3. HH:MM or HHhMM format with optional meridiem and timezone (e.g. "21:00", "21h00", "14:00", "9:30pm EST")
     const timeMatch = timeStr.match(/^(\d{1,2})[:h](\d{2})?(?:\s*(am|pm))?(?:\s*([a-zA-Z]+|[+-]\d{1,2}(?::?\d{2})?))?$/i) ||
                       timeStr.match(/^(\d{1,2})(?:h)?(?:\s*(am|pm))?(?:\s*([a-zA-Z]+|[+-]\d{1,2}(?::?\d{2})?))?$/i);
 
@@ -95,26 +138,26 @@ class SessionManager extends EventEmitter {
       // If an explicit timezone is given (e.g. CET, UTC, EST)
       if (tzStr && TZ_OFFSETS[tzStr] !== undefined) {
         const offsetMinutes = TZ_OFFSETS[tzStr];
-        const targetUtcMs = Date.UTC(baseDate.getUTCFullYear(), baseDate.getUTCMonth(), baseDate.getUTCDate(), hours, minutes, 0) - (offsetMinutes * 60 * 1000);
+        const targetUtcMs = Date.UTC(workingBase.getUTCFullYear(), workingBase.getUTCMonth(), workingBase.getUTCDate(), hours, minutes, 0) - (offsetMinutes * 60 * 1000);
         const target = new Date(targetUtcMs);
-        if (target.getTime() < baseDate.getTime() - 30 * 60 * 1000) {
+        if (dayOffset === 0 && target.getTime() < baseDate.getTime() - 30 * 60 * 1000) {
           target.setUTCDate(target.getUTCDate() + 1);
         }
         return target;
       }
 
       // Default: parse in server's local configured timezone (process.env.TZ)
-      const target = new Date(baseDate);
+      const target = new Date(workingBase);
       target.setHours(hours, minutes, 0, 0);
 
-      // If the target time is in the past by more than 30 minutes, assume tomorrow
-      if (target.getTime() < baseDate.getTime() - 30 * 60 * 1000) {
+      // If the target time is in the past by more than 30 minutes and no future day was explicitly requested, assume tomorrow
+      if (dayOffset === 0 && target.getTime() < baseDate.getTime() - 30 * 60 * 1000) {
         target.setDate(target.getDate() + 1);
       }
       return target;
     }
 
-    // ISO timestamp or standard date parse
+    // 4. ISO timestamp or standard date parse
     const parsed = new Date(timeStr);
     if (!isNaN(parsed.getTime())) {
       return parsed;

@@ -232,6 +232,47 @@ console.log('✅ Test 9 passed: Unlogged web votes rejected and purged');
 
   console.log('✅ Test 11 passed: Custom ping target and reminder prior settings verified');
 
-  console.log('\n🎉 ALL 11 UNIT TESTS PASSED SUCCESSFULLY!\n');
+  // Test 12: Smart open time parsing (now, tomorrow, future days, any time of day)
+  console.log('\nTest 12: Testing open flexible time parsing (now, future days, any time)...');
+  const baseWed = new Date('2026-10-28T20:00:00.000Z');
+
+  // "now"
+  const parsedNow = sessionManager.parseTimeString('now', baseWed);
+  assert.strictEqual(parsedNow.getTime(), baseWed.getTime(), 'now should match baseDate');
+
+  // "tomorrow 20:00"
+  const parsedTomorrow = sessionManager.parseTimeString('tomorrow 20:00', baseWed);
+  assert.strictEqual(parsedTomorrow.getDate(), baseWed.getDate() + 1, 'tomorrow should be next day');
+
+  // "in 2 days 18:30"
+  const parsedIn2Days = sessionManager.parseTimeString('in 2 days 18:30', baseWed);
+  assert.strictEqual(parsedIn2Days.getDate(), baseWed.getDate() + 2, 'in 2 days should advance 2 days');
+
+  // "friday 21:00" (Base is Wednesday Oct 28 -> Friday is Oct 30)
+  const parsedFriday = sessionManager.parseTimeString('friday 21:00', baseWed);
+  assert.strictEqual(parsedFriday.getDay(), 5, 'friday should have getDay() === 5');
+
+  // Any time of the day: e.g. 14:00, 16:30, 08:00
+  const parsed14 = sessionManager.parseTimeString('14:00', baseWed);
+  assert.ok(parsed14 instanceof Date, '14:00 should be parsed as valid Date');
+
+  // Test Discord Autocomplete Handler
+  const { handleAutocomplete } = require('./src/bot/handlers');
+  let autocompleteResponses = null;
+  const mockAutocompleteInteraction = {
+    options: {
+      getFocused: () => ({ name: 'party_time', value: 'tom' })
+    },
+    respond: async (items) => {
+      autocompleteResponses = items;
+    }
+  };
+  await handleAutocomplete(mockAutocompleteInteraction);
+  assert.ok(Array.isArray(autocompleteResponses), 'Autocomplete should return array');
+  assert.ok(autocompleteResponses.some(r => r.value.includes('tomorrow')), 'Should suggest tomorrow options');
+
+  console.log('✅ Test 12 passed: Open time parsing and Discord autocomplete verified');
+
+  console.log('\n🎉 ALL 12 UNIT TESTS PASSED SUCCESSFULLY!\n');
   process.exit(0);
 })();

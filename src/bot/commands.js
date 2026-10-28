@@ -11,42 +11,16 @@ function createCommandOptions(builder) {
     .addStringOption(option =>
       option
         .setName('party_time')
-        .setDescription('Match start time (Combobox choices or custom: e.g. 21:00, in 1h)')
+        .setDescription('Match start time (e.g. 21:00, in 1h, tomorrow 20:00, now)')
         .setRequired(false)
-        .addChoices(
-          { name: 'in 15m (+15 mins from now)', value: 'in 15m' },
-          { name: 'in 30m (+30 mins from now)', value: 'in 30m' },
-          { name: 'in 45m (+45 mins from now)', value: 'in 45m' },
-          { name: 'in 1h (+1 hour from now)', value: 'in 1h' },
-          { name: 'in 1h30 (+1.5 hours from now)', value: 'in 1h30' },
-          { name: 'in 2h (+2 hours from now)', value: 'in 2h' },
-          { name: '19:00 (7:00 PM)', value: '19:00' },
-          { name: '19:30 (7:30 PM)', value: '19:30' },
-          { name: '20:00 (8:00 PM)', value: '20:00' },
-          { name: '20:30 (8:30 PM)', value: '20:30' },
-          { name: '21:00 (Prime time - 9:00 PM)', value: '21:00' },
-          { name: '21:30 (9:30 PM)', value: '21:30' },
-          { name: '22:00 (10:00 PM)', value: '22:00' },
-          { name: '22:30 (10:30 PM)', value: '22:30' },
-          { name: '23:00 (11:00 PM)', value: '23:00' },
-          { name: '00:00 (Midnight)', value: '00:00' }
-        )
+        .setAutocomplete(true)
     )
     .addStringOption(option =>
       option
         .setName('vote_deadline')
-        .setDescription('Vote deadline before match (Combobox choices: 5m, 10m, 15m, 30m, 45m, 1h before)')
+        .setDescription('Vote deadline before match (e.g. 15m before, 30m before, 1h before)')
         .setRequired(false)
-        .addChoices(
-          { name: '15m before (Default - 15 mins prior)', value: '15m before' },
-          { name: '5m before (5 mins prior)', value: '5m before' },
-          { name: '10m before (10 mins prior)', value: '10m before' },
-          { name: '30m before (30 mins prior)', value: '30m before' },
-          { name: '45m before (45 mins prior)', value: '45m before' },
-          { name: '1h before (1 hour prior)', value: '1h before' },
-          { name: 'in 15m (+15 mins from now)', value: 'in 15m' },
-          { name: 'in 30m (+30 mins from now)', value: 'in 30m' }
-        )
+        .setAutocomplete(true)
     )
     .addIntegerOption(option =>
       option
