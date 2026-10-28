@@ -16,6 +16,7 @@ RUN apk add --no-cache \
     ttf-dejavu \
     font-noto \
     font-freefont \
+    tzdata \
     && fc-cache -f
 
 COPY package*.json ./

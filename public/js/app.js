@@ -354,6 +354,20 @@ function renderSessions() {
     const myVote = session.votes ? session.votes[myUserId]?.status : null;
     const canCancel = currentUser && (currentUser.id === session.creator.id || currentUser.id === 'admin');
 
+    const localPartyTime = session.partyTimestamp ?
+      new Date(session.partyTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) :
+      session.partyTime;
+    const localDeadline = session.voteDeadlineTimestamp ?
+      new Date(session.voteDeadlineTimestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }) :
+      session.voteDeadline;
+
+    const authNoticeHtml = !currentUser ? `
+      <div class="vote-auth-banner" style="background: rgba(255, 70, 85, 0.12); border: 1px solid rgba(255, 70, 85, 0.3); padding: 0.5rem 0.75rem; border-radius: 4px; margin-bottom: 0.75rem; display: flex; align-items: center; justify-content: space-between; font-size: 0.8rem;">
+        <span style="color: #ff9aa2;">🔒 You must be logged in with Discord to vote</span>
+        <a href="/api/auth/login" class="btn btn-discord btn-sm" style="padding: 0.25rem 0.6rem; font-size: 0.75rem;">Login with Discord</a>
+      </div>
+    ` : '';
+
     card.innerHTML = `
       ${isCancelled ? `
         <div class="cancelled-stamp-overlay">
@@ -388,12 +402,12 @@ function renderSessions() {
       <div class="session-timing-hud">
         <div class="time-item">
           <span class="time-label">MATCH BEGINS</span>
-          <span class="time-val">${session.partyTime}</span>
+          <span class="time-val">${localPartyTime}</span>
           <span class="time-countdown">${formatCountdown(session.partyTimestamp)}</span>
         </div>
         <div class="time-item">
           <span class="time-label">VOTE DEADLINE</span>
-          <span class="time-val">${session.voteDeadline}</span>
+          <span class="time-val">${localDeadline}</span>
           <span class="time-countdown">${formatCountdown(session.voteDeadlineTimestamp)}</span>
         </div>
         <div class="time-item">
@@ -434,23 +448,24 @@ function renderSessions() {
       </div>
 
       <div class="voting-bar">
-        <div class="vote-buttons-row">
-          <button class="btn btn-vote btn-vote-sure vote-btn ${myVote === 'sure' ? 'active' : ''}" data-id="${session.id}" data-vote="sure" ${isCancelled || isLocked ? 'disabled' : ''}>
+        ${authNoticeHtml}
+        <div class="vote-buttons-row" style="${!currentUser ? 'opacity: 0.45; pointer-events: none;' : ''}">
+          <button class="btn btn-vote btn-vote-sure vote-btn ${myVote === 'sure' ? 'active' : ''}" data-id="${session.id}" data-vote="sure" ${isCancelled || isLocked || !currentUser ? 'disabled' : ''}>
             🟢 Sure to be there
           </button>
-          <button class="btn btn-vote btn-vote-maybe vote-btn ${myVote === 'maybe' ? 'active' : ''}" data-id="${session.id}" data-vote="maybe" ${isCancelled || isLocked ? 'disabled' : ''}>
+          <button class="btn btn-vote btn-vote-maybe vote-btn ${myVote === 'maybe' ? 'active' : ''}" data-id="${session.id}" data-vote="maybe" ${isCancelled || isLocked || !currentUser ? 'disabled' : ''}>
             🟡 Will try (Maybe)
           </button>
-          <button class="btn btn-vote btn-vote-if-last vote-btn ${myVote === 'if_last' ? 'active' : ''}" data-id="${session.id}" data-vote="if_last" ${isCancelled || isLocked ? 'disabled' : ''}>
+          <button class="btn btn-vote btn-vote-if-last vote-btn ${myVote === 'if_last' ? 'active' : ''}" data-id="${session.id}" data-vote="if_last" ${isCancelled || isLocked || !currentUser ? 'disabled' : ''}>
             🟣 If a last
           </button>
-          <button class="btn btn-vote btn-vote-backup vote-btn ${myVote === 'backup' ? 'active' : ''}" data-id="${session.id}" data-vote="backup" ${isCancelled || isLocked ? 'disabled' : ''}>
+          <button class="btn btn-vote btn-vote-backup vote-btn ${myVote === 'backup' ? 'active' : ''}" data-id="${session.id}" data-vote="backup" ${isCancelled || isLocked || !currentUser ? 'disabled' : ''}>
             🟠 If needed (Backup)
           </button>
-          <button class="btn btn-vote btn-vote-no vote-btn ${myVote === 'no' ? 'active' : ''}" data-id="${session.id}" data-vote="no" ${isCancelled || isLocked ? 'disabled' : ''}>
+          <button class="btn btn-vote btn-vote-no vote-btn ${myVote === 'no' ? 'active' : ''}" data-id="${session.id}" data-vote="no" ${isCancelled || isLocked || !currentUser ? 'disabled' : ''}>
             🔴 No
           </button>
-          <button class="btn btn-secondary btn-sm vote-btn" data-id="${session.id}" data-vote="remove" ${isCancelled || isLocked ? 'disabled' : ''}>
+          <button class="btn btn-secondary btn-sm vote-btn" data-id="${session.id}" data-vote="remove" ${isCancelled || isLocked || !currentUser ? 'disabled' : ''}>
             🗑️ Clear
           </button>
         </div>
@@ -475,8 +490,14 @@ function renderSessions() {
   });
 }
 
-// Voting handler
+// Voting handler (STRICT: Authentication required)
 async function handleVoteClick(e) {
+  if (!currentUser) {
+    showToast('🔒 Please log in with Discord to cast a vote.', 'error');
+    window.location.href = '/api/auth/login';
+    return;
+  }
+
   const sessionId = e.currentTarget.getAttribute('data-id');
   const voteType = e.currentTarget.getAttribute('data-vote');
 
@@ -485,9 +506,6 @@ async function handleVoteClick(e) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        userId: currentUser?.id,
-        username: currentUser?.username,
-        displayName: currentUser?.displayName || currentUser?.username,
         voteType
       })
     });
@@ -509,6 +527,11 @@ async function handleVoteClick(e) {
 
 // Cancel handler
 async function handleCancelClick(e) {
+  if (!currentUser) {
+    showToast('🔒 Please log in with Discord to cancel a session.', 'error');
+    return;
+  }
+
   const sessionId = e.currentTarget.getAttribute('data-id');
 
   if (!confirm('Are you sure you want to CANCEL this Valorant session? It will be stamped CANCELLED in diagonal.')) {
@@ -592,6 +615,28 @@ createSessionForm.addEventListener('submit', async (e) => {
   const targetRoleName = targetRoleId ? (roleSelectEl.options[roleSelectEl.selectedIndex]?.text || '@everyone') : 'Channel';
   const note = document.getElementById('noteInput').value.trim();
 
+  // Parse party time in user's browser local time to prevent server/client timezone discrepancies
+  let partyTimestamp = null;
+  const relMatch = partyTime.match(/^(?:in\s+|\+)?(\d+)\s*(m|min|mins|h|hr|hours)?$/i);
+  if (relMatch) {
+    const val = parseInt(relMatch[1], 10);
+    const unit = relMatch[2] ? relMatch[2].toLowerCase() : 'm';
+    partyTimestamp = Date.now() + (unit.startsWith('h') ? val * 3600000 : val * 60000);
+  } else {
+    const m = partyTime.match(/^(\d{1,2})[:h](\d{2})?(?:\s*(am|pm))?$/i);
+    if (m) {
+      let h = parseInt(m[1], 10);
+      const mins = m[2] ? parseInt(m[2], 10) : 0;
+      const ampm = (m[3] || '').toLowerCase();
+      if (ampm === 'pm' && h < 12) h += 12;
+      if (ampm === 'am' && h === 12) h = 0;
+      const d = new Date();
+      d.setHours(h, mins, 0, 0);
+      if (d.getTime() < Date.now() - 30 * 60 * 1000) d.setDate(d.getDate() + 1);
+      partyTimestamp = d.getTime();
+    }
+  }
+
   try {
     const res = await fetch('/api/sessions', {
       method: 'POST',
@@ -599,6 +644,7 @@ createSessionForm.addEventListener('submit', async (e) => {
       body: JSON.stringify({
         partySize,
         partyTime,
+        partyTimestamp,
         voteDeadline,
         guildId,
         channelId,

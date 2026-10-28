@@ -13,6 +13,7 @@ services:
     environment:
       - NODE_ENV=production
       - PORT=${PORT:-3000}
+      - TZ=${TIMEZONE:-Europe/Paris}
     volumes:
       - ./data:/app/data
     networks:

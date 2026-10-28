@@ -60,12 +60,12 @@ function buildSessionMessagePayload(session, roster, webBaseUrl = 'https://valob
   embed.addFields(
     {
       name: '⏰ Match Start',
-      value: `<t:${partyUnix}:t> (<t:${partyUnix}:R>)`,
+      value: `<t:${partyUnix}:t> (<t:${partyUnix}:R>)\n*(Host: ${session.partyTime})*`,
       inline: true
     },
     {
       name: '⏳ Vote Deadline',
-      value: `<t:${deadlineUnix}:t> (<t:${deadlineUnix}:R>)`,
+      value: `<t:${deadlineUnix}:t> (<t:${deadlineUnix}:R>)\n*(Host: ${session.voteDeadline})*`,
       inline: true
     },
     {

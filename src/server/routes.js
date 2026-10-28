@@ -328,7 +328,9 @@ function createApiRouter(botClient, config = {}) {
         channelId,
         creator,
         partyTime,
+        partyTimestamp: req.body.partyTimestamp ? Number(req.body.partyTimestamp) : undefined,
         voteDeadline,
+        voteDeadlineTimestamp: req.body.voteDeadlineTimestamp ? Number(req.body.voteDeadlineTimestamp) : undefined,
         partySize: Number(partySize) || 5,
         targetRoleId: safeRoleId || 'everyone',
         targetRoleName: safeRoleName || '@everyone',
@@ -363,25 +365,26 @@ function createApiRouter(botClient, config = {}) {
     }
   });
 
-  // 11. Cast vote from Web App
+  // 11. Cast vote from Web App (STRICT: Authentication required)
   router.post('/sessions/:id/vote', async (req, res) => {
     try {
       const user = getSessionUser(req);
+      if (!user) {
+        return res.status(401).json({
+          error: 'Authentication required. Please log in with your Discord account to vote.'
+        });
+      }
+
       const { voteType } = req.body;
       if (!voteType) {
         return res.status(400).json({ error: 'voteType is required' });
       }
 
-      const userObj = user ? {
+      const userObj = {
         id: user.id,
         username: user.username,
-        displayName: user.displayName,
-        avatar: user.avatar
-      } : {
-        id: req.body.userId || `web_${Math.random().toString(36).substring(2, 7)}`,
-        username: req.body.username || 'Web Player',
-        displayName: req.body.displayName || req.body.username || 'Web Player',
-        avatar: null
+        displayName: user.displayName || user.username,
+        avatar: user.avatar || null
       };
 
       const session = sessionManager.castVote(req.params.id, userObj, voteType, { source: 'web' });
@@ -394,24 +397,30 @@ function createApiRouter(botClient, config = {}) {
     }
   });
 
-  // 12. Cancel session
+  // 12. Cancel session (STRICT: Authentication required)
   router.post('/sessions/:id/cancel', async (req, res) => {
     try {
       const user = getSessionUser(req);
+      if (!user) {
+        return res.status(401).json({
+          error: 'Authentication required. Please log in with Discord.'
+        });
+      }
+
       const session = sessionManager.getSession(req.params.id);
       if (!session) {
         return res.status(404).json({ error: 'Session not found' });
       }
 
       // Only host or authorized user
-      const isCreator = user && user.id === session.creator.id;
-      if (user && !isCreator) {
+      const isCreator = user.id === session.creator.id;
+      if (!isCreator) {
         return res.status(403).json({ error: 'Only the session host can cancel this session.' });
       }
 
       const updated = sessionManager.cancelSession(req.params.id, {
-        id: user?.id || req.body.userId || 'web_admin',
-        username: user?.displayName || req.body.username || 'Web Host'
+        id: user.id,
+        username: user.displayName || user.username
       });
 
       res.json({
@@ -420,6 +429,16 @@ function createApiRouter(botClient, config = {}) {
       });
     } catch (err) {
       res.status(400).json({ error: err.message });
+    }
+  });
+
+  // 13. Purge all unauthenticated web votes
+  router.post('/sessions/purge-unlogged', async (req, res) => {
+    try {
+      const purged = sessionManager.purgeUnloggedVotes();
+      res.json({ success: true, purgedCount: purged });
+    } catch (err) {
+      res.status(500).json({ error: err.message });
     }
   });
 

@@ -94,5 +94,39 @@ assert.ok(discordPayload.files.length === 1, 'Has banner attachment');
 assert.ok(discordPayload.embeds[0].data.title.includes('CANCELLED'), 'Title indicates cancelled');
 console.log('✅ Test 7 passed: Discord payload generated with buttons and attachments');
 
-console.log('\n🎉 ALL 7 UNIT TESTS PASSED SUCCESSFULLY!\n');
+// Test 8: Timezone parsing & formatting
+console.log('\nTest 8: Verifying Timezone parsing and formatting...');
+const refDate = new Date('2026-10-28T17:00:00.000Z');
+const parsedCet = sessionManager.parseTimeString('21:00 CET', refDate);
+const parsedUtc = sessionManager.parseTimeString('21:00 UTC', refDate);
+assert.strictEqual(parsedCet.toISOString(), '2026-10-28T20:00:00.000Z', '21:00 CET should be 20:00:00 UTC');
+assert.strictEqual(parsedUtc.toISOString(), '2026-10-28T21:00:00.000Z', '21:00 UTC should be 21:00:00 UTC');
+console.log('✅ Test 8 passed: Timezone parsing correctly converts CET and UTC');
+
+// Test 9: Unlogged web vote prevention & purge
+console.log('\nTest 9: Testing unlogged web vote rejection and purge...');
+const testSession = sessionManager.createSession({
+  creator: { id: 'auth_host', username: 'AuthHost' },
+  partySize: 5,
+  partyTime: 'in 1h'
+});
+
+// Voting from web without logged-in Discord user should fail
+assert.throws(() => {
+  sessionManager.castVote(testSession.id, { id: 'web_abc12', username: 'Web Player' }, 'sure', { source: 'web' });
+}, /Authentication required/, 'Should reject unauthenticated web votes');
+
+// Inject a mock unlogged vote manually to test purgeUnloggedVotes
+testSession.votes['web_ghost'] = {
+  userId: 'web_ghost',
+  username: 'Web Player',
+  status: 'sure'
+};
+assert.ok(testSession.votes['web_ghost'], 'Ghost vote added');
+const purgedCount = sessionManager.purgeUnloggedVotes();
+assert.strictEqual(testSession.votes['web_ghost'], undefined, 'Ghost vote should be purged');
+assert.ok(purgedCount >= 1, 'Should report purged count');
+console.log('✅ Test 9 passed: Unlogged web votes rejected and purged');
+
+console.log('\n🎉 ALL 9 UNIT TESTS PASSED SUCCESSFULLY!\n');
 process.exit(0);

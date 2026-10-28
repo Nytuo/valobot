@@ -47,6 +47,19 @@ function createDiscordBot(config) {
         console.error('❌ [Discord Bot] Failed to register slash commands:', err);
       }
     }
+
+    // Refresh active Discord messages (rewrites timezones and applies vote purges to Discord feed)
+    try {
+      const activeSessions = sessionManager.getActiveSessions();
+      for (const session of activeSessions) {
+        if (session.channelId && session.messageId) {
+          console.log(`🔄 [Discord Bot] Rewriting Discord message for active session ${session.id}...`);
+          await updateDiscordMessage(client, session, config);
+        }
+      }
+    } catch (refreshErr) {
+      console.warn('⚠️ [Discord Bot] Active session refresh notice:', refreshErr.message);
+    }
   });
 
   // Interaction Router

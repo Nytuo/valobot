@@ -1,4 +1,10 @@
 require('dotenv').config();
+
+// Enforce configured timezone for Node.js Date operations (defaults to Europe/Paris)
+if (process.env.TIMEZONE || !process.env.TZ) {
+  process.env.TZ = process.env.TIMEZONE || process.env.TZ || 'Europe/Paris';
+}
+
 const { createDiscordBot } = require('./bot/client');
 const { createApp } = require('./server/app');
 

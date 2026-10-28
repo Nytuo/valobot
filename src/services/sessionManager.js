@@ -1,18 +1,59 @@
 const { EventEmitter } = require('events');
 const { loadSessions, saveSessions } = require('./storage');
 
+// Common Timezone Offsets in minutes relative to UTC
+const TZ_OFFSETS = {
+  UTC: 0, GMT: 0, Z: 0,
+  WET: 0, WEST: 60,
+  CET: 60, CEST: 120,
+  BST: 60,
+  EET: 120, EEST: 180,
+  MSK: 180,
+  EST: -300, EDT: -240,
+  CST: -360, CDT: -300,
+  MST: -420, MDT: -360,
+  PST: -480, PDT: -420
+};
+
 class SessionManager extends EventEmitter {
   constructor() {
     super();
     this.sessions = loadSessions();
     this.timers = new Map();
+    this.purgeUnloggedVotes();
+    this.fixActiveSessionTimezones();
     this.restoreTimers();
   }
 
-  // Parse human time strings like "21:00", "21h30", "22h", "in 30m", "in 1h"
+  // Purge any unauthenticated or mock web votes
+  purgeUnloggedVotes() {
+    let changed = false;
+    let purgedCount = 0;
+    for (const session of Object.values(this.sessions)) {
+      if (!session.votes) continue;
+      for (const [userId, vote] of Object.entries(session.votes)) {
+        const isUnlogged = userId.startsWith('web_') ||
+                           vote.username === 'Web Player' ||
+                           vote.displayName === 'Web Player' ||
+                           userId === 'web_admin';
+        if (isUnlogged) {
+          delete session.votes[userId];
+          changed = true;
+          purgedCount++;
+        }
+      }
+    }
+    if (changed) {
+      this.persist();
+      console.log(`🧹 [SessionManager] Purged ${purgedCount} unlogged web vote(s) from storage.`);
+    }
+    return purgedCount;
+  }
+
+  // Parse human time strings like "21:00", "21h30", "21:00 CET", "in 30m", "in 1h"
   parseTimeString(timeStr, baseDate = new Date()) {
     if (!timeStr) return null;
-    timeStr = timeStr.trim().toLowerCase();
+    timeStr = timeStr.trim();
 
     // Relative format: "in 45m", "in 2h", "+30m"
     const relMatch = timeStr.match(/^(?:in\s+|\+)?(\d+)\s*(m|min|mins|h|hr|hours)?$/i);
@@ -23,18 +64,31 @@ class SessionManager extends EventEmitter {
       return new Date(baseDate.getTime() + ms);
     }
 
-    // HH:MM or HHhMM or HHh format: e.g. 21:00, 21h30, 21h, 9:30pm
-    const timeMatch = timeStr.match(/^(\d{1,2})[:h](\d{2})?(?:\s*(am|pm))?$/i) ||
-                      timeStr.match(/^(\d{1,2})(?:h)?(?:\s*(am|pm))?$/i);
+    // HH:MM or HHhMM format with optional meridiem and timezone (e.g. "21:00", "21h00", "21:00 CET", "9:30pm EST")
+    const timeMatch = timeStr.match(/^(\d{1,2})[:h](\d{2})?(?:\s*(am|pm))?(?:\s*([a-zA-Z]+|[+-]\d{1,2}(?::?\d{2})?))?$/i) ||
+                      timeStr.match(/^(\d{1,2})(?:h)?(?:\s*(am|pm))?(?:\s*([a-zA-Z]+|[+-]\d{1,2}(?::?\d{2})?))?$/i);
 
     if (timeMatch) {
       let hours = parseInt(timeMatch[1], 10);
       const minutes = timeMatch[2] ? parseInt(timeMatch[2], 10) : 0;
       const meridiem = (timeMatch[3] || '').toLowerCase();
+      const tzStr = (timeMatch[4] || '').toUpperCase();
 
       if (meridiem === 'pm' && hours < 12) hours += 12;
       if (meridiem === 'am' && hours === 12) hours = 0;
 
+      // If an explicit timezone is given (e.g. CET, UTC, EST)
+      if (tzStr && TZ_OFFSETS[tzStr] !== undefined) {
+        const offsetMinutes = TZ_OFFSETS[tzStr];
+        const targetUtcMs = Date.UTC(baseDate.getUTCFullYear(), baseDate.getUTCMonth(), baseDate.getUTCDate(), hours, minutes, 0) - (offsetMinutes * 60 * 1000);
+        const target = new Date(targetUtcMs);
+        if (target.getTime() < baseDate.getTime() - 30 * 60 * 1000) {
+          target.setUTCDate(target.getUTCDate() + 1);
+        }
+        return target;
+      }
+
+      // Default: parse in server's local configured timezone (process.env.TZ)
       const target = new Date(baseDate);
       target.setHours(hours, minutes, 0, 0);
 
@@ -118,10 +172,11 @@ class SessionManager extends EventEmitter {
         name: options.targetRoleName || '@everyone'
       },
       targetMemberIds: options.targetMemberIds || [],
-      partyTime: partyDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      partyTime: partyDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }),
       partyTimestamp: partyDate.getTime(),
-      voteDeadline: deadlineDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+      voteDeadline: deadlineDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', hour12: false }),
       voteDeadlineTimestamp: deadlineDate.getTime(),
+      timezone: process.env.TIMEZONE || process.env.TZ || 'Europe/Paris',
       createdAt: now.getTime(),
       status: 'active', // 'active' | 'locked' | 'cancelled'
       cancelledBy: null,
@@ -168,10 +223,37 @@ class SessionManager extends EventEmitter {
       .sort((a, b) => b.createdAt - a.createdAt);
   }
 
+  // Automatically realign any active sessions whose partyTimestamp was skewed by UTC container defaults
+  fixActiveSessionTimezones() {
+    const updated = [];
+    for (const session of Object.values(this.sessions)) {
+      if (session.status !== 'active') continue;
+      const base = new Date(session.createdAt || Date.now());
+      const recomputed = this.parseTimeString(session.partyTime, base);
+      if (recomputed && Math.abs(recomputed.getTime() - session.partyTimestamp) >= 30 * 60 * 1000) {
+        console.log(`🕒 [SessionManager] Realigned session ${session.id} partyTimestamp from ${session.partyTimestamp} to ${recomputed.getTime()}`);
+        session.partyTimestamp = recomputed.getTime();
+        const newDeadline = this.computeDeadline(recomputed, session.voteDeadline, base);
+        session.voteDeadlineTimestamp = newDeadline.getTime();
+        session.timezone = process.env.TIMEZONE || process.env.TZ || 'Europe/Paris';
+        updated.push(session);
+      }
+    }
+    if (updated.length > 0) {
+      this.persist();
+    }
+    return updated;
+  }
+
   castVote(sessionId, user, voteType, meta = {}) {
     const session = this.sessions[sessionId];
     if (!session) throw new Error('Session not found');
     if (session.status !== 'active') throw new Error(`Cannot vote on a ${session.status} session`);
+
+    // Guard: Prevent unauthenticated / anonymous web votes
+    if (meta.source === 'web' && (!user || !user.id || user.id.startsWith('web_') || user.username === 'Web Player')) {
+      throw new Error('Authentication required. Only logged-in Discord users can vote.');
+    }
 
     const now = Date.now();
     const validVotes = ['sure', 'maybe', 'if_last', 'backup', 'no', 'remove'];
