@@ -579,14 +579,44 @@ emptyCreateBtn?.addEventListener('click', openModal);
 closeCreateModalBtn.addEventListener('click', closeModal);
 cancelModalBtn.addEventListener('click', closeModal);
 
-// Quick Chips
+// Quick Chips for inputs and combobox selects
 document.querySelectorAll('.chip').forEach(chip => {
   chip.addEventListener('click', () => {
     const targetId = chip.getAttribute('data-target');
+    const targetSelect = chip.getAttribute('data-target-select');
     const val = chip.getAttribute('data-val');
-    document.getElementById(targetId).value = val;
+
+    if (targetSelect) {
+      const selectEl = document.getElementById(targetSelect);
+      if (selectEl) {
+        selectEl.value = val;
+        selectEl.dispatchEvent(new Event('change'));
+      }
+    } else if (targetId) {
+      const el = document.getElementById(targetId);
+      if (el) el.value = val;
+    }
   });
 });
+
+// Combobox custom input revealers
+const partyTimeSelect = document.getElementById('partyTimeSelect');
+const partyTimeCustomInput = document.getElementById('partyTimeCustomInput');
+if (partyTimeSelect && partyTimeCustomInput) {
+  partyTimeSelect.addEventListener('change', () => {
+    partyTimeCustomInput.style.display = partyTimeSelect.value === 'custom' ? 'block' : 'none';
+    if (partyTimeSelect.value === 'custom') partyTimeCustomInput.focus();
+  });
+}
+
+const voteDeadlineSelect = document.getElementById('voteDeadlineSelect');
+const voteDeadlineCustomInput = document.getElementById('voteDeadlineCustomInput');
+if (voteDeadlineSelect && voteDeadlineCustomInput) {
+  voteDeadlineSelect.addEventListener('change', () => {
+    voteDeadlineCustomInput.style.display = voteDeadlineSelect.value === 'custom' ? 'block' : 'none';
+    if (voteDeadlineSelect.value === 'custom') voteDeadlineCustomInput.focus();
+  });
+}
 
 // Form Submission
 createSessionForm.addEventListener('submit', async (e) => {
@@ -608,8 +638,17 @@ createSessionForm.addEventListener('submit', async (e) => {
   }
 
   const partySize = document.querySelector('input[name="partySize"]:checked').value;
-  const partyTime = document.getElementById('partyTimeInput').value.trim();
-  const voteDeadline = document.getElementById('voteDeadlineInput').value.trim();
+  
+  let partyTime = partyTimeSelect?.value || '21:00';
+  if (partyTime === 'custom') {
+    partyTime = partyTimeCustomInput?.value.trim() || '21:00';
+  }
+
+  let voteDeadline = voteDeadlineSelect?.value || '15m before';
+  if (voteDeadline === 'custom') {
+    voteDeadline = voteDeadlineCustomInput?.value.trim() || '15m before';
+  }
+
   const roleSelectEl = document.getElementById('roleSelect');
   const targetRoleId = roleSelectEl.value || null;
   const targetRoleName = targetRoleId ? (roleSelectEl.options[roleSelectEl.selectedIndex]?.text || '@everyone') : 'Channel';
