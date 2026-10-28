@@ -1,4 +1,10 @@
-const { PermissionFlagsBits } = require('discord.js');
+const {
+  PermissionFlagsBits,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle
+} = require('discord.js');
 const sessionManager = require('../services/sessionManager');
 const { buildSessionMessagePayload } = require('./embedBuilder');
 const { buildCreateSessionModal } = require('./commands');
@@ -42,12 +48,19 @@ async function handleCommand(interaction, config = {}) {
         const members = await interaction.guild.members.fetch().catch(() => interaction.guild.roles.cache.get(targetRole.id)?.members || null);
         if (members) {
           targetMemberIds = members
-            .filter(m => !m.user.bot && m.roles.cache.has(targetRole.id))
+            .filter(m => !m.user?.bot && m.roles.cache.has(targetRole.id))
             .map(m => m.id);
         }
       } catch (err) {
         console.warn('Could not fetch guild members for role:', err.message);
       }
+    }
+
+    // If no specific role filter was specified, register channel members as target candidates
+    if (targetMemberIds.length === 0 && interaction.channel?.members) {
+      targetMemberIds = interaction.channel.members
+        .filter(m => !m.user?.bot)
+        .map(m => m.id);
     }
 
     const session = sessionManager.createSession({
@@ -107,6 +120,13 @@ async function handleModalSubmit(interaction, config = {}) {
   const note = interaction.fields.getTextInputValue('input_note') || 'Valorant Stack';
 
   try {
+    let targetMemberIds = [];
+    if (interaction.channel?.members) {
+      targetMemberIds = interaction.channel.members
+        .filter(m => !m.user?.bot)
+        .map(m => m.id);
+    }
+
     const session = sessionManager.createSession({
       guildId: interaction.guildId,
       channelId: interaction.channelId,
@@ -121,6 +141,7 @@ async function handleModalSubmit(interaction, config = {}) {
       partySize,
       targetRoleId: 'everyone',
       targetRoleName: '@everyone',
+      targetMemberIds,
       note: sanitizeNote(note)
     });
 
@@ -318,9 +339,129 @@ async function updateDiscordMessage(client, session, config = {}, targetMessage 
   }
 }
 
+async function getUnresponsiveChannelMembers(client, session, channel = null) {
+  try {
+    if (!channel) {
+      if (!session.channelId) return [];
+      channel = await client.channels.fetch(session.channelId).catch(() => null);
+    }
+    if (!channel || !channel.isTextBased()) return [];
+
+    const candidateUserIds = new Set();
+
+    // 1. Target members if saved during creation (e.g. role members or channel members)
+    if (Array.isArray(session.targetMemberIds)) {
+      for (const id of session.targetMemberIds) {
+        if (id) candidateUserIds.add(id);
+      }
+    }
+
+    // 2. Members with permission to view this channel (from cache)
+    if (channel.members) {
+      for (const [memberId, member] of channel.members) {
+        if (!member.user?.bot) {
+          candidateUserIds.add(memberId);
+        }
+      }
+    }
+
+    // 3. Scan recent channel messages to catch active human members
+    try {
+      const recent = await channel.messages.fetch({ limit: 50 }).catch(() => null);
+      if (recent) {
+        for (const msg of recent.values()) {
+          if (!msg.author?.bot) {
+            candidateUserIds.add(msg.author.id);
+          }
+        }
+      }
+    } catch (e) {}
+
+    // 4. Exclude bot itself, the host, and anyone who has already voted
+    const votedUserIds = new Set(Object.keys(session.votes || {}));
+    if (client.user?.id) votedUserIds.add(client.user.id);
+    if (session.creator?.id) votedUserIds.add(session.creator.id);
+
+    const unresponsive = [];
+    for (const userId of candidateUserIds) {
+      if (!votedUserIds.has(userId)) {
+        unresponsive.push(userId);
+      }
+    }
+
+    return unresponsive;
+  } catch (err) {
+    console.error('Error fetching unresponsive channel members:', err);
+    return [];
+  }
+}
+
+async function sendChannelReminder(client, session, config = {}) {
+  try {
+    if (!session.channelId || session.status !== 'active') return;
+    const channel = await client.channels.fetch(session.channelId).catch(() => null);
+    if (!channel || !channel.isTextBased()) return;
+
+    const unresponsiveIds = await getUnresponsiveChannelMembers(client, session, channel);
+    if (!unresponsiveIds || unresponsiveIds.length === 0) {
+      console.log(`ℹ️ [Reminder] All users have responded for session ${session.id}; skipping reminder ping.`);
+      return;
+    }
+
+    const partyUnix = Math.floor(session.partyTimestamp / 1000);
+    const roster = sessionManager.calculateRosters(session);
+    const partySize = session.partySize || 5;
+    const lockedCount = roster.team1.length;
+
+    const messageUrl = (session.guildId && session.channelId && session.messageId) ?
+      `https://discord.com/channels/${session.guildId}/${session.channelId}/${session.messageId}` :
+      null;
+
+    const embed = new EmbedBuilder()
+      .setColor(0xff4655)
+      .setTitle('⏰ MATCH IN 30 MINUTES — AWAITING YOUR RESPONSE')
+      .setDescription(
+        `The Valorant recruitment session **"${session.note || 'Competitive Stack'}"** begins in **30 minutes** (<t:${partyUnix}:R>)!\n\n` +
+        `🛡️ **Current Lineup:** **${lockedCount}/${partySize} Locked**\n` +
+        `⏰ **Match Start:** <t:${partyUnix}:t> (<t:${partyUnix}:F>)\n\n` +
+        `Please cast your vote so the squad can lock in the roster!`
+      )
+      .setFooter({ text: 'Valobot Reminder Protocol • Auto-ping 30m prior' });
+
+    const components = [];
+    if (messageUrl) {
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setLabel('👉 Jump to Session & Vote')
+          .setStyle(ButtonStyle.Link)
+          .setURL(messageUrl)
+      );
+      components.push(row);
+    }
+
+    // Chunk mentions into batches of 50 to respect Discord limits
+    const CHUNK_SIZE = 50;
+    for (let i = 0; i < unresponsiveIds.length; i += CHUNK_SIZE) {
+      const chunk = unresponsiveIds.slice(i, i + CHUNK_SIZE);
+      const mentions = chunk.map(id => `<@${id}>`).join(' ');
+      await channel.send({
+        content: `🔔 ${mentions}`,
+        embeds: i === 0 ? [embed] : [],
+        components: i === 0 ? components : []
+      });
+    }
+
+    console.log(`📢 [Discord Bot] Pinged ${unresponsiveIds.length} unresponsive user(s) 30m prior to session ${session.id}`);
+  } catch (err) {
+    console.error(`❌ [Discord Bot] Failed to send 30m reminder for session ${session.id}:`, err);
+  }
+}
+
 module.exports = {
   handleCommand,
   handleModalSubmit,
   handleButton,
-  updateDiscordMessage
+  updateDiscordMessage,
+  sendChannelReminder,
+  getUnresponsiveChannelMembers
 };

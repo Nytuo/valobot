@@ -316,6 +316,13 @@ function createApiRouter(botClient, config = {}) {
         safeRoleName = 'Channel';
       }
 
+      let targetMemberIds = [];
+      if (channel.members) {
+        targetMemberIds = channel.members
+          .filter(m => !m.user?.bot)
+          .map(m => m.id);
+      }
+
       const creator = {
         id: user.id,
         username: user.username,
@@ -334,6 +341,7 @@ function createApiRouter(botClient, config = {}) {
         partySize: Number(partySize) || 5,
         targetRoleId: safeRoleId || 'everyone',
         targetRoleName: safeRoleName || '@everyone',
+        targetMemberIds,
         note: cleanNote
       });
 

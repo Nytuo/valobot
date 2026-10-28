@@ -20,6 +20,7 @@ class SessionManager extends EventEmitter {
     super();
     this.sessions = loadSessions();
     this.timers = new Map();
+    this.reminderTimers = new Map();
     this.purgeUnloggedVotes();
     this.fixActiveSessionTimezones();
     this.restoreTimers();
@@ -181,6 +182,7 @@ class SessionManager extends EventEmitter {
       status: 'active', // 'active' | 'locked' | 'cancelled'
       cancelledBy: null,
       cancelledAt: null,
+      reminderSent: Boolean(options.reminderSent),
       votes: {},
       history: []
     };
@@ -204,6 +206,7 @@ class SessionManager extends EventEmitter {
     this.sessions[id] = session;
     this.persist();
     this.scheduleDeadline(session);
+    this.scheduleReminder(session);
     this.emit('sessionCreated', session);
 
     return session;
@@ -315,6 +318,10 @@ class SessionManager extends EventEmitter {
       clearTimeout(this.timers.get(sessionId));
       this.timers.delete(sessionId);
     }
+    if (this.reminderTimers.has(sessionId)) {
+      clearTimeout(this.reminderTimers.get(sessionId));
+      this.reminderTimers.delete(sessionId);
+    }
 
     this.persist();
     this.emit('sessionCancelled', session);
@@ -336,6 +343,10 @@ class SessionManager extends EventEmitter {
     if (this.timers.has(sessionId)) {
       clearTimeout(this.timers.get(sessionId));
       this.timers.delete(sessionId);
+    }
+    if (this.reminderTimers.has(sessionId)) {
+      clearTimeout(this.reminderTimers.get(sessionId));
+      this.reminderTimers.delete(sessionId);
     }
 
     this.persist();
@@ -433,10 +444,49 @@ class SessionManager extends EventEmitter {
     }
   }
 
+  // Schedule a reminder ping 30 minutes prior to party match time
+  scheduleReminder(session) {
+    if (session.status !== 'active' || session.reminderSent) return;
+
+    if (this.reminderTimers.has(session.id)) {
+      clearTimeout(this.reminderTimers.get(session.id));
+      this.reminderTimers.delete(session.id);
+    }
+
+    const now = Date.now();
+    const reminderTime = session.partyTimestamp - 30 * 60 * 1000;
+    const msUntilReminder = reminderTime - now;
+
+    if (msUntilReminder > 0) {
+      const timer = setTimeout(() => {
+        if (session.status === 'active' && !session.reminderSent) {
+          session.reminderSent = true;
+          this.persist();
+          console.log(`📢 [SessionManager] Emitting 30m reminder event for session ${session.id}`);
+          this.emit('sessionReminder', session);
+        }
+      }, msUntilReminder);
+
+      this.reminderTimers.set(session.id, timer);
+      console.log(`⏰ [SessionManager] Scheduled 30m reminder for session ${session.id} in ${Math.round(msUntilReminder / 60000)}m`);
+    }
+  }
+
+  // Force trigger reminder (useful for testing or manual prompt)
+  triggerReminder(sessionId) {
+    const session = this.sessions[sessionId];
+    if (!session || session.status !== 'active') return false;
+    session.reminderSent = true;
+    this.persist();
+    this.emit('sessionReminder', session);
+    return true;
+  }
+
   restoreTimers() {
     for (const session of Object.values(this.sessions)) {
       if (session.status === 'active') {
         this.scheduleDeadline(session);
+        this.scheduleReminder(session);
       }
     }
   }

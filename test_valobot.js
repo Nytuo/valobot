@@ -128,5 +128,64 @@ assert.strictEqual(testSession.votes['web_ghost'], undefined, 'Ghost vote should
 assert.ok(purgedCount >= 1, 'Should report purged count');
 console.log('✅ Test 9 passed: Unlogged web votes rejected and purged');
 
-console.log('\n🎉 ALL 9 UNIT TESTS PASSED SUCCESSFULLY!\n');
-process.exit(0);
+// Test 10: 30-minute prior reminder ping for unresponsive channel members
+(async () => {
+  console.log('\nTest 10: Testing 30-min prior reminder and unresponsive user detection...');
+  const reminderSession = sessionManager.createSession({
+    creator: { id: 'reminder_host', username: 'Host' },
+    partySize: 5,
+    partyTime: 'in 2h',
+    targetMemberIds: ['reminder_host', 'user_a', 'user_b', 'user_c']
+  });
+
+  // user_a votes 'sure'
+  sessionManager.castVote(reminderSession.id, { id: 'user_a', username: 'UserA' }, 'sure');
+
+  // Mock Discord client and channel
+  const mockChannel = {
+    isTextBased: () => true,
+    members: new Map([
+      ['user_a', { user: { id: 'user_a', bot: false } }],
+      ['user_b', { user: { id: 'user_b', bot: false } }],
+      ['user_c', { user: { id: 'user_c', bot: false } }],
+      ['user_d', { user: { id: 'user_d', bot: false } }],
+      ['bot_user', { user: { id: 'bot_user', bot: true } }]
+    ]),
+    messages: {
+      fetch: async () => new Map()
+    }
+  };
+
+  const mockClient = {
+    user: { id: 'valobot_id' },
+    channels: {
+      fetch: async () => mockChannel
+    }
+  };
+
+  const { getUnresponsiveChannelMembers } = require('./src/bot/handlers');
+  const unresponsive = await getUnresponsiveChannelMembers(mockClient, reminderSession, mockChannel);
+
+  // Host and user_a voted. bot_user is bot. valobot_id is bot.
+  // Unresponsive should be user_b, user_c, and user_d!
+  assert.ok(!unresponsive.includes('reminder_host'), 'Host should not be marked unresponsive');
+  assert.ok(!unresponsive.includes('user_a'), 'Voted user should not be marked unresponsive');
+  assert.ok(!unresponsive.includes('bot_user'), 'Bots should not be marked unresponsive');
+  assert.ok(unresponsive.includes('user_b'), 'user_b should be unresponsive');
+  assert.ok(unresponsive.includes('user_c'), 'user_c should be unresponsive');
+  assert.ok(unresponsive.includes('user_d'), 'user_d should be unresponsive');
+
+  // Test reminder event triggering
+  let reminderFired = false;
+  sessionManager.once('sessionReminder', (s) => {
+    if (s.id === reminderSession.id) reminderFired = true;
+  });
+  sessionManager.triggerReminder(reminderSession.id);
+  assert.strictEqual(reminderFired, true, 'Reminder event should fire');
+  assert.strictEqual(reminderSession.reminderSent, true, 'reminderSent flag should be set');
+
+  console.log('✅ Test 10 passed: 30m prior reminder and unresponsive user detection verified');
+
+  console.log('\n🎉 ALL 10 UNIT TESTS PASSED SUCCESSFULLY!\n');
+  process.exit(0);
+})();
