@@ -180,41 +180,22 @@
         <div class="form-row">
           <div class="form-group col-6">
             <label class="form-label" for="partyTimeInput">MATCH START TIME *</label>
-            <input type="text" id="partyTimeInput" list="partyTimeDatalist" class="form-input" placeholder="e.g. 21:00, in 1h, tomorrow 20h, now" required value="21:00">
-            <datalist id="partyTimeDatalist">
-              <option value="now">Now (Start match immediately)</option>
-              <option value="in 15m">+15 mins from now</option>
-              <option value="in 30m">+30 mins from now</option>
-              <option value="in 45m">+45 mins from now</option>
-              <option value="in 1h">+1 hour from now</option>
-              <option value="in 2h">+2 hours from now</option>
-              <option value="19:00">19:00 (7:00 PM)</option>
-              <option value="20:00">20:00 (8:00 PM)</option>
-              <option value="20:30">20:30 (8:30 PM)</option>
-              <option value="21:00">21:00 (Prime time)</option>
-              <option value="21:30">21:30 (9:30 PM)</option>
-              <option value="22:00">22:00 (10:00 PM)</option>
-              <option value="22:30">22:30 (10:30 PM)</option>
-              <option value="23:00">23:00 (11:00 PM)</option>
-              <option value="tomorrow 20:00">Tomorrow at 20:00</option>
-              <option value="tomorrow 21:00">Tomorrow at 21:00</option>
-              <option value="tomorrow 22:00">Tomorrow at 22:00</option>
-            </datalist>
+            <input type="datetime-local" id="partyTimeInput" class="form-input" required>
             <div class="quick-chips">
-              <button type="button" class="chip" data-target="partyTimeInput" data-val="now">now</button>
-              <button type="button" class="chip" data-target="partyTimeInput" data-val="in 15m">+15m</button>
-              <button type="button" class="chip" data-target="partyTimeInput" data-val="in 30m">+30m</button>
-              <button type="button" class="chip" data-target="partyTimeInput" data-val="in 1h">+1h</button>
-              <button type="button" class="chip" data-target="partyTimeInput" data-val="21:00">21:00</button>
-              <button type="button" class="chip" data-target="partyTimeInput" data-val="tomorrow 21:00">tomorrow</button>
+              <button type="button" class="chip" data-time-preset="now">now</button>
+              <button type="button" class="chip" data-time-preset="+15m">+15m</button>
+              <button type="button" class="chip" data-time-preset="+30m">+30m</button>
+              <button type="button" class="chip" data-time-preset="+1h">+1h</button>
+              <button type="button" class="chip" data-time-preset="tonight21">tonight 21:00</button>
+              <button type="button" class="chip" data-time-preset="tomorrow21">tomorrow 21:00</button>
             </div>
+            <span class="form-hint">Pick any future day/time or click a quick preset.</span>
           </div>
 
           <div class="form-group col-6">
             <label class="form-label" for="voteDeadlineInput">VOTE DEADLINE (ENDS)</label>
-            <input type="text" id="voteDeadlineInput" list="voteDeadlineDatalist" class="form-input" placeholder="e.g. 15m before" value="15m before">
-            <datalist id="voteDeadlineDatalist">
-              <option value="15m before">15m before (Default - 15 mins prior)</option>
+            <select id="voteDeadlineInput" class="form-input">
+              <option value="15m before" selected>15m before (Default - 15 mins prior)</option>
               <option value="5m before">5m before (5 mins prior)</option>
               <option value="10m before">10m before (10 mins prior)</option>
               <option value="30m before">30m before (30 mins prior)</option>
@@ -222,7 +203,7 @@
               <option value="1h before">1h before (1 hour prior)</option>
               <option value="in 15m">+15 mins from now</option>
               <option value="in 30m">+30 mins from now</option>
-            </datalist>
+            </select>
             <div class="quick-chips">
               <button type="button" class="chip" data-target="voteDeadlineInput" data-val="5m before">5m</button>
               <button type="button" class="chip" data-target="voteDeadlineInput" data-val="10m before">10m</button>

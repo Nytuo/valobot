@@ -273,6 +273,15 @@ console.log('✅ Test 9 passed: Unlogged web votes rejected and purged');
 
   console.log('✅ Test 12 passed: Open time parsing and Discord autocomplete verified');
 
-  console.log('\n🎉 ALL 12 UNIT TESTS PASSED SUCCESSFULLY!\n');
+  // Test 13: Strict validation for invalid/gibberish time inputs
+  console.log('\nTest 13: Testing strict rejection of invalid time strings...');
+  const invalidInputs = ['gibberish', 'asdf123', 'someday', 'not a time', 'tomorrow maybe'];
+  for (const inv of invalidInputs) {
+    const res = sessionManager.parseTimeString(inv, baseWed);
+    assert.strictEqual(res, null, `Invalid string "${inv}" should return null`);
+  }
+  console.log('✅ Test 13 passed: Invalid time inputs properly rejected');
+
+  console.log('\n🎉 ALL 13 UNIT TESTS PASSED SUCCESSFULLY!\n');
   process.exit(0);
 })();

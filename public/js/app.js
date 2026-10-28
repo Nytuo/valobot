@@ -559,9 +559,55 @@ async function handleCancelClick(e) {
   }
 }
 
+function formatLocalDatetime(d) {
+  const pad = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function setPartyTimePreset(preset) {
+  const input = document.getElementById('partyTimeInput');
+  if (!input) return;
+  const now = new Date();
+
+  if (preset === 'now') {
+    input.value = formatLocalDatetime(now);
+  } else if (preset === '+15m') {
+    input.value = formatLocalDatetime(new Date(now.getTime() + 15 * 60000));
+  } else if (preset === '+30m') {
+    input.value = formatLocalDatetime(new Date(now.getTime() + 30 * 60000));
+  } else if (preset === '+1h') {
+    input.value = formatLocalDatetime(new Date(now.getTime() + 60 * 60000));
+  } else if (preset === 'tonight21') {
+    const target = new Date(now);
+    target.setHours(21, 0, 0, 0);
+    if (target.getTime() < now.getTime() - 15 * 60000) {
+      target.setDate(target.getDate() + 1);
+    }
+    input.value = formatLocalDatetime(target);
+  } else if (preset === 'tomorrow21') {
+    const target = new Date(now);
+    target.setDate(target.getDate() + 1);
+    target.setHours(21, 0, 0, 0);
+    input.value = formatLocalDatetime(target);
+  }
+  input.dispatchEvent(new Event('input', { bubbles: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
 // Modal open/close
 function openModal() {
   createModal.style.display = 'flex';
+  const partyInput = document.getElementById('partyTimeInput');
+  if (partyInput && !partyInput.value) {
+    const now = new Date();
+    const tonight = new Date(now);
+    tonight.setHours(21, 0, 0, 0);
+    if (tonight.getTime() < now.getTime() + 15 * 60000) {
+      tonight.setDate(tonight.getDate() + 1);
+    }
+    partyInput.value = formatLocalDatetime(tonight);
+    partyInput.min = formatLocalDatetime(new Date(now.getTime() - 5 * 60000));
+  }
   if (!currentUser) {
     loginRequiredNotice.style.display = 'flex';
     submitCreateBtn.disabled = true;
@@ -582,6 +628,11 @@ cancelModalBtn.addEventListener('click', closeModal);
 // Quick Chips for inputs and combobox selects
 document.querySelectorAll('.chip').forEach(chip => {
   chip.addEventListener('click', () => {
+    const timePreset = chip.getAttribute('data-time-preset');
+    if (timePreset) {
+      setPartyTimePreset(timePreset);
+      return;
+    }
     const targetId = chip.getAttribute('data-target');
     const targetSelect = chip.getAttribute('data-target-select');
     const val = chip.getAttribute('data-val');
@@ -597,6 +648,7 @@ document.querySelectorAll('.chip').forEach(chip => {
       if (el) {
         el.value = val;
         el.dispatchEvent(new Event('input'));
+        el.dispatchEvent(new Event('change'));
       }
     }
   });
@@ -622,8 +674,51 @@ createSessionForm.addEventListener('submit', async (e) => {
   }
 
   const partySize = document.querySelector('input[name="partySize"]:checked').value;
-  const partyTime = document.getElementById('partyTimeInput').value.trim() || '21:00';
-  const voteDeadline = document.getElementById('voteDeadlineInput').value.trim() || '15m before';
+  const partyInputEl = document.getElementById('partyTimeInput');
+  const partyDate = partyInputEl.value ? new Date(partyInputEl.value) : null;
+
+  if (!partyDate || isNaN(partyDate.getTime())) {
+    showToast('Please select a valid match date and time.', 'error');
+    return;
+  }
+
+  const partyTimestamp = partyDate.getTime();
+
+  // Create clean human-readable label for partyTime
+  const now = new Date();
+  const isToday = partyDate.toDateString() === now.toDateString();
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  const isTomorrow = partyDate.toDateString() === tomorrow.toDateString();
+  const timeStr = partyDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false });
+  let partyTime = '';
+  if (isToday) {
+    partyTime = timeStr;
+  } else if (isTomorrow) {
+    partyTime = `Tomorrow ${timeStr}`;
+  } else {
+    const dayStr = partyDate.toLocaleDateString([], { month: 'short', day: 'numeric' });
+    partyTime = `${dayStr} ${timeStr}`;
+  }
+
+  const voteDeadlineEl = document.getElementById('voteDeadlineInput');
+  const voteDeadline = voteDeadlineEl.value.trim() || '15m before';
+  let voteDeadlineTimestamp = null;
+  const beforeMatch = voteDeadline.match(/^(\d+)\s*(m|min|mins|h)?\s*before$/i);
+  if (beforeMatch) {
+    const val = parseInt(beforeMatch[1], 10);
+    const unit = beforeMatch[2] ? beforeMatch[2].toLowerCase() : 'm';
+    const ms = unit.startsWith('h') ? val * 3600000 : val * 60000;
+    voteDeadlineTimestamp = partyTimestamp - ms;
+  } else if (voteDeadline.startsWith('in ')) {
+    const rel = voteDeadline.match(/^in\s+(\d+)\s*(m|min|mins|h)?$/i);
+    if (rel) {
+      const val = parseInt(rel[1], 10);
+      const unit = rel[2] ? rel[2].toLowerCase() : 'm';
+      const ms = unit.startsWith('h') ? val * 3600000 : val * 60000;
+      voteDeadlineTimestamp = Date.now() + ms;
+    }
+  }
 
   const roleSelectEl = document.getElementById('roleSelect');
   const targetRoleId = roleSelectEl.value || null;
@@ -631,42 +726,6 @@ createSessionForm.addEventListener('submit', async (e) => {
   const note = document.getElementById('noteInput').value.trim();
   const pingTarget = document.getElementById('pingTargetSelect')?.value || 'everyone';
   const reminderPrior = document.getElementById('reminderPriorSelect')?.value || '30m';
-
-  // Parse party time in user's browser local time to prevent server/client timezone discrepancies
-  let partyTimestamp = null;
-  if (partyTime.toLowerCase() === 'now') {
-    partyTimestamp = Date.now();
-  } else {
-    const relMatch = partyTime.match(/^(?:in\s+|\+)?(\d+)\s*(m|min|mins|h|hr|hours)?$/i);
-    if (relMatch) {
-      const val = parseInt(relMatch[1], 10);
-      const unit = relMatch[2] ? relMatch[2].toLowerCase() : 'm';
-      partyTimestamp = Date.now() + (unit.startsWith('h') ? val * 3600000 : val * 60000);
-    } else {
-      let dayOffset = 0;
-      let cleanTime = partyTime;
-      const tmMatch = partyTime.match(/^(?:tomorrow|demain)(?:\s+(?:at\s+)?(.*))?$/i);
-      if (tmMatch) {
-        dayOffset = 1;
-        cleanTime = tmMatch[1] ? tmMatch[1].trim() : '21:00';
-      }
-      const m = cleanTime.match(/^(\d{1,2})[:h](\d{2})?(?:\s*(am|pm))?$/i);
-      if (m) {
-        let h = parseInt(m[1], 10);
-        const mins = m[2] ? parseInt(m[2], 10) : 0;
-        const ampm = (m[3] || '').toLowerCase();
-        if (ampm === 'pm' && h < 12) h += 12;
-        if (ampm === 'am' && h === 12) h = 0;
-        const d = new Date();
-        d.setDate(d.getDate() + dayOffset);
-        d.setHours(h, mins, 0, 0);
-        if (dayOffset === 0 && d.getTime() < Date.now() - 30 * 60 * 1000) {
-          d.setDate(d.getDate() + 1);
-        }
-        partyTimestamp = d.getTime();
-      }
-    }
-  }
 
   try {
     const res = await fetch('/api/sessions', {
@@ -677,6 +736,7 @@ createSessionForm.addEventListener('submit', async (e) => {
         partyTime,
         partyTimestamp,
         voteDeadline,
+        voteDeadlineTimestamp,
         guildId,
         channelId,
         targetRoleId,

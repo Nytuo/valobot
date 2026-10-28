@@ -68,6 +68,14 @@ async function handleCommand(interaction, config = {}) {
     return interaction.showModal(modal);
   }
 
+  const parsedPartyDate = sessionManager.parseTimeString(partyTime);
+  if (!parsedPartyDate) {
+    return interaction.reply({
+      content: `❌ **Invalid Match Time:** \`${partyTime}\` could not be recognized.\n💡 **Allowed examples:** \`21:00\`, \`in 30m\`, \`in 1h\`, \`tomorrow 20:30\`, \`now\`, or pick from the autocomplete suggestions.`,
+      ephemeral: true
+    });
+  }
+
   await interaction.deferReply();
 
   try {
@@ -156,6 +164,12 @@ async function handleModalSubmit(interaction, config = {}) {
   await interaction.deferReply();
 
   const partyTime = interaction.fields.getTextInputValue('input_party_time');
+  const parsedPartyDate = sessionManager.parseTimeString(partyTime);
+  if (!parsedPartyDate) {
+    return interaction.editReply({
+      content: `❌ **Invalid Match Time:** \`${partyTime}\` could not be recognized.\n💡 **Allowed examples:** \`21:00\`, \`in 30m\`, \`in 1h\`, \`tomorrow 20:30\`, \`now\`.`
+    });
+  }
   const voteDeadline = interaction.fields.getTextInputValue('input_vote_deadline') || null;
   const partySizeRaw = interaction.fields.getTextInputValue('input_party_size') || '5';
   const partySize = [2, 3, 5].includes(Number(partySizeRaw)) ? Number(partySizeRaw) : 5;
