@@ -186,6 +186,52 @@ console.log('✅ Test 9 passed: Unlogged web votes rejected and purged');
 
   console.log('✅ Test 10 passed: 30m prior reminder and unresponsive user detection verified');
 
-  console.log('\n🎉 ALL 10 UNIT TESTS PASSED SUCCESSFULLY!\n');
+  // Test 11: Customizable ping target and reminder prior settings
+  console.log('\nTest 11: Testing customizable ping target and reminder prior...');
+  const { parsePingSettingsInput } = require('./src/bot/handlers');
+
+  // Test modal input parsing
+  const opt1 = parsePingSettingsInput('only on time, 15m');
+  assert.strictEqual(opt1.pingTarget, 'only_on_time');
+  assert.strictEqual(opt1.reminderPrior, '15m');
+
+  const opt2 = parsePingSettingsInput('role, 1h');
+  assert.strictEqual(opt2.pingTarget, 'role');
+  assert.strictEqual(opt2.reminderPrior, '1h');
+
+  const opt3 = parsePingSettingsInput('none, off');
+  assert.strictEqual(opt3.pingTarget, 'none');
+  assert.strictEqual(opt3.reminderPrior, 'off');
+
+  const opt4 = parsePingSettingsInput('');
+  assert.strictEqual(opt4.pingTarget, 'everyone');
+  assert.strictEqual(opt4.reminderPrior, '30m');
+
+  // Test session creation with custom pingTarget and reminderPrior
+  const customSession = sessionManager.createSession({
+    creator: { id: 'custom_host', username: 'CustomHost' },
+    partySize: 5,
+    partyTime: 'in 3h',
+    pingTarget: 'only_on_time',
+    reminderPrior: '15m'
+  });
+  assert.strictEqual(customSession.pingTarget, 'only_on_time');
+  assert.strictEqual(customSession.reminderPrior, '15m');
+
+  // Test session with disabled reminder (off)
+  const silentSession = sessionManager.createSession({
+    creator: { id: 'silent_host', username: 'SilentHost' },
+    partySize: 5,
+    partyTime: 'in 2h',
+    pingTarget: 'none',
+    reminderPrior: 'off'
+  });
+  assert.strictEqual(silentSession.pingTarget, 'none');
+  assert.strictEqual(silentSession.reminderPrior, 'off');
+  assert.ok(!sessionManager.reminderTimers.has(silentSession.id), 'Disabled reminder should not schedule a timer');
+
+  console.log('✅ Test 11 passed: Custom ping target and reminder prior settings verified');
+
+  console.log('\n🎉 ALL 11 UNIT TESTS PASSED SUCCESSFULLY!\n');
   process.exit(0);
 })();

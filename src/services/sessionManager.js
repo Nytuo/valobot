@@ -15,6 +15,20 @@ const TZ_OFFSETS = {
   PST: -480, PDT: -420
 };
 
+// Helper to parse reminder prior strings (e.g. "30m", "15m", "1h", "off") into minutes
+function parseReminderMinutes(str) {
+  if (!str) return 30;
+  str = String(str).toLowerCase().trim();
+  if (['off', 'none', 'false', '0', 'disabled'].includes(str)) return 0;
+  const match = str.match(/^(\d+)\s*(m|min|mins|h|hr|hours)?$/i);
+  if (match) {
+    const val = parseInt(match[1], 10);
+    const unit = match[2] ? match[2].toLowerCase() : 'm';
+    return unit.startsWith('h') ? val * 60 : val;
+  }
+  return 30;
+}
+
 class SessionManager extends EventEmitter {
   constructor() {
     super();
@@ -183,6 +197,8 @@ class SessionManager extends EventEmitter {
       cancelledBy: null,
       cancelledAt: null,
       reminderSent: Boolean(options.reminderSent),
+      pingTarget: options.pingTarget || 'everyone', // 'everyone' | 'role' | 'only_on_time' | 'none'
+      reminderPrior: options.reminderPrior || '30m', // '30m' | '15m' | '45m' | '1h' | 'off'
       votes: {},
       history: []
     };
@@ -444,7 +460,7 @@ class SessionManager extends EventEmitter {
     }
   }
 
-  // Schedule a reminder ping 30 minutes prior to party match time
+  // Schedule a reminder ping prior to party match time (customizable: 15m, 30m, 45m, 1h, off)
   scheduleReminder(session) {
     if (session.status !== 'active' || session.reminderSent) return;
 
@@ -453,8 +469,14 @@ class SessionManager extends EventEmitter {
       this.reminderTimers.delete(session.id);
     }
 
+    // If notifications are disabled or pingTarget is none
+    if (session.pingTarget === 'none' || session.reminderPrior === 'off') return;
+
+    const reminderMins = parseReminderMinutes(session.reminderPrior);
+    if (reminderMins <= 0) return;
+
     const now = Date.now();
-    const reminderTime = session.partyTimestamp - 30 * 60 * 1000;
+    const reminderTime = session.partyTimestamp - reminderMins * 60 * 1000;
     const msUntilReminder = reminderTime - now;
 
     if (msUntilReminder > 0) {
@@ -462,13 +484,13 @@ class SessionManager extends EventEmitter {
         if (session.status === 'active' && !session.reminderSent) {
           session.reminderSent = true;
           this.persist();
-          console.log(`📢 [SessionManager] Emitting 30m reminder event for session ${session.id}`);
+          console.log(`📢 [SessionManager] Emitting ${reminderMins}m reminder event for session ${session.id}`);
           this.emit('sessionReminder', session);
         }
       }, msUntilReminder);
 
       this.reminderTimers.set(session.id, timer);
-      console.log(`⏰ [SessionManager] Scheduled 30m reminder for session ${session.id} in ${Math.round(msUntilReminder / 60000)}m`);
+      console.log(`⏰ [SessionManager] Scheduled ${reminderMins}m reminder for session ${session.id} in ${Math.round(msUntilReminder / 60000)}m`);
     }
   }
 

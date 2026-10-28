@@ -614,6 +614,8 @@ createSessionForm.addEventListener('submit', async (e) => {
   const targetRoleId = roleSelectEl.value || null;
   const targetRoleName = targetRoleId ? (roleSelectEl.options[roleSelectEl.selectedIndex]?.text || '@everyone') : 'Channel';
   const note = document.getElementById('noteInput').value.trim();
+  const pingTarget = document.getElementById('pingTargetSelect')?.value || 'everyone';
+  const reminderPrior = document.getElementById('reminderPriorSelect')?.value || '30m';
 
   // Parse party time in user's browser local time to prevent server/client timezone discrepancies
   let partyTimestamp = null;
@@ -650,6 +652,8 @@ createSessionForm.addEventListener('submit', async (e) => {
         channelId,
         targetRoleId,
         targetRoleName,
+        pingTarget,
+        reminderPrior,
         note
       })
     });

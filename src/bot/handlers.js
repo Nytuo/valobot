@@ -17,6 +17,34 @@ function isChannelAllowed(channelId) {
   return list.length === 0 || list.includes(channelId);
 }
 
+// Parse free-form ping settings from modal (e.g. "everyone, 30m", "only on time, 15m", "role, off", "none")
+function parsePingSettingsInput(input = '') {
+  const text = String(input).toLowerCase().trim();
+  let pingTarget = 'everyone';
+  let reminderPrior = '30m';
+
+  if (text.includes('only on time') || text.includes('ontime') || text.includes('on time')) {
+    pingTarget = 'only_on_time';
+  } else if (text.includes('role')) {
+    pingTarget = 'role';
+  } else if (text.includes('none') || text.includes('silent') || text.includes('no ping')) {
+    pingTarget = 'none';
+  } else if (text.includes('everyone') || text.includes('all')) {
+    pingTarget = 'everyone';
+  }
+
+  if (text.includes('off') || text.includes('disable') || text.includes('no reminder')) {
+    reminderPrior = 'off';
+  } else {
+    const timeMatch = text.match(/(\d+)\s*(m|min|mins|h|hr|hours)/i);
+    if (timeMatch) {
+      reminderPrior = `${timeMatch[1]}${timeMatch[2].startsWith('h') ? 'h' : 'm'}`;
+    }
+  }
+
+  return { pingTarget, reminderPrior };
+}
+
 async function handleCommand(interaction, config = {}) {
   if (!isChannelAllowed(interaction.channelId)) {
     const list = process.env.ALLOWED_CHANNEL_IDS.split(',').map(s => s.trim()).filter(Boolean);
@@ -31,6 +59,8 @@ async function handleCommand(interaction, config = {}) {
   const partySize = interaction.options.getInteger('party_size') || 5;
   const targetRole = interaction.options.getRole('target_role');
   const note = interaction.options.getString('note');
+  const pingTarget = interaction.options.getString('ping_target') || 'everyone';
+  const reminderPrior = interaction.options.getString('reminder_prior') || '30m';
 
   // If no party_time provided, show the sender UI modal!
   if (!partyTime) {
@@ -78,15 +108,27 @@ async function handleCommand(interaction, config = {}) {
       targetRoleId: targetRole ? targetRole.id : 'everyone',
       targetRoleName: targetRole ? targetRole.name : '@everyone',
       targetMemberIds,
+      pingTarget,
+      reminderPrior,
       note: sanitizeNote(note)
     });
 
     const roster = sessionManager.calculateRosters(session);
     const payload = buildSessionMessagePayload(session, roster, config.webBaseUrl);
 
-    // Initial content with ping
-    const pingText = targetRole ? `<@&${targetRole.id}>` : '@everyone';
-    payload.content = `🎮 **NEW VALORANT RECRUITMENT!** ${pingText} - A stacking party is forming!`;
+    // Initial content with customizable ping target
+    let pingText = '';
+    if (pingTarget === 'none' || pingTarget === 'only_on_time') {
+      pingText = '';
+    } else if (pingTarget === 'role' && targetRole && targetRole.id !== 'everyone') {
+      pingText = `<@&${targetRole.id}>`;
+    } else {
+      pingText = targetRole && targetRole.id !== 'everyone' ? `<@&${targetRole.id}>` : '@everyone';
+    }
+
+    payload.content = pingText
+      ? `🎮 **NEW VALORANT RECRUITMENT!** ${pingText} - A stacking party is forming!`
+      : `🎮 **NEW VALORANT RECRUITMENT!** A stacking party is forming! *(Notifications: ${pingTarget === 'only_on_time' ? 'only on time' : 'silent'})*`;
 
     const message = await interaction.editReply(payload);
     session.messageId = message.id;
@@ -118,6 +160,11 @@ async function handleModalSubmit(interaction, config = {}) {
   const partySizeRaw = interaction.fields.getTextInputValue('input_party_size') || '5';
   const partySize = [2, 3, 5].includes(Number(partySizeRaw)) ? Number(partySizeRaw) : 5;
   const note = interaction.fields.getTextInputValue('input_note') || 'Valorant Stack';
+  let rawPingSettings = '';
+  try {
+    rawPingSettings = interaction.fields.getTextInputValue('input_ping_settings') || '';
+  } catch (e) {}
+  const { pingTarget, reminderPrior } = parsePingSettingsInput(rawPingSettings);
 
   try {
     let targetMemberIds = [];
@@ -142,12 +189,24 @@ async function handleModalSubmit(interaction, config = {}) {
       targetRoleId: 'everyone',
       targetRoleName: '@everyone',
       targetMemberIds,
+      pingTarget,
+      reminderPrior,
       note: sanitizeNote(note)
     });
 
     const roster = sessionManager.calculateRosters(session);
     const payload = buildSessionMessagePayload(session, roster, config.webBaseUrl);
-    payload.content = `🎮 **NEW VALORANT RECRUITMENT!** @everyone - Stacking session initiated!`;
+
+    let pingText = '';
+    if (pingTarget === 'none' || pingTarget === 'only_on_time') {
+      pingText = '';
+    } else {
+      pingText = '@everyone';
+    }
+
+    payload.content = pingText
+      ? `🎮 **NEW VALORANT RECRUITMENT!** ${pingText} - Stacking session initiated!`
+      : `🎮 **NEW VALORANT RECRUITMENT!** Stacking session initiated! *(Notifications: ${pingTarget === 'only_on_time' ? 'only on time' : 'silent'})*`;
 
     const message = await interaction.editReply(payload);
     session.messageId = message.id;
@@ -413,20 +472,23 @@ async function sendChannelReminder(client, session, config = {}) {
     const partySize = session.partySize || 5;
     const lockedCount = roster.team1.length;
 
+    const reminderMins = session.reminderPrior ? parseInt(session.reminderPrior, 10) || 30 : 30;
+    const reminderLabel = reminderMins >= 60 ? `${Math.floor(reminderMins / 60)} hour(s)` : `${reminderMins} minutes`;
+
     const messageUrl = (session.guildId && session.channelId && session.messageId) ?
       `https://discord.com/channels/${session.guildId}/${session.channelId}/${session.messageId}` :
       null;
 
     const embed = new EmbedBuilder()
       .setColor(0xff4655)
-      .setTitle('⏰ MATCH IN 30 MINUTES — AWAITING YOUR RESPONSE')
+      .setTitle(`⏰ MATCH IN ${reminderLabel.toUpperCase()} — AWAITING YOUR RESPONSE`)
       .setDescription(
-        `The Valorant recruitment session **"${session.note || 'Competitive Stack'}"** begins in **30 minutes** (<t:${partyUnix}:R>)!\n\n` +
+        `The Valorant recruitment session **"${session.note || 'Competitive Stack'}"** begins in **${reminderLabel}** (<t:${partyUnix}:R>)!\n\n` +
         `🛡️ **Current Lineup:** **${lockedCount}/${partySize} Locked**\n` +
         `⏰ **Match Start:** <t:${partyUnix}:t> (<t:${partyUnix}:F>)\n\n` +
         `Please cast your vote so the squad can lock in the roster!`
       )
-      .setFooter({ text: 'Valobot Reminder Protocol • Auto-ping 30m prior' });
+      .setFooter({ text: `Valobot Reminder Protocol • Auto-ping ${reminderLabel} prior` });
 
     const components = [];
     if (messageUrl) {
@@ -463,5 +525,6 @@ module.exports = {
   handleButton,
   updateDiscordMessage,
   sendChannelReminder,
-  getUnresponsiveChannelMembers
+  getUnresponsiveChannelMembers,
+  parsePingSettingsInput
 };

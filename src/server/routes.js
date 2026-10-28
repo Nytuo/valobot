@@ -330,6 +330,9 @@ function createApiRouter(botClient, config = {}) {
         avatar: user.avatar
       };
 
+      const pingTarget = req.body.pingTarget || 'everyone';
+      const reminderPrior = req.body.reminderPrior || '30m';
+
       const session = sessionManager.createSession({
         guildId,
         channelId,
@@ -342,6 +345,8 @@ function createApiRouter(botClient, config = {}) {
         targetRoleId: safeRoleId || 'everyone',
         targetRoleName: safeRoleName || '@everyone',
         targetMemberIds,
+        pingTarget,
+        reminderPrior,
         note: cleanNote
       });
 
@@ -349,8 +354,19 @@ function createApiRouter(botClient, config = {}) {
       try {
         const roster = sessionManager.calculateRosters(session);
         const payload = buildSessionMessagePayload(session, roster, config.webBaseUrl);
-        const pingText = safeRoleId && safeRoleId !== 'everyone' ? `<@&${safeRoleId}>` : (safeRoleId === 'everyone' ? '@everyone' : '');
-        payload.content = `🎮 **NEW VALORANT RECRUITMENT!** ${pingText} - A stacking party is forming!`;
+
+        let pingText = '';
+        if (pingTarget === 'none' || pingTarget === 'only_on_time') {
+          pingText = '';
+        } else if (pingTarget === 'role' && safeRoleId && safeRoleId !== 'everyone') {
+          pingText = `<@&${safeRoleId}>`;
+        } else {
+          pingText = safeRoleId && safeRoleId !== 'everyone' ? `<@&${safeRoleId}>` : (safeRoleId === 'everyone' ? '@everyone' : '');
+        }
+
+        payload.content = pingText
+          ? `🎮 **NEW VALORANT RECRUITMENT!** ${pingText} - A stacking party is forming!`
+          : `🎮 **NEW VALORANT RECRUITMENT!** A stacking party is forming! *(Notifications: ${pingTarget === 'only_on_time' ? 'only on time' : 'silent'})*`;
 
         const message = await channel.send(payload);
         session.messageId = message.id;

@@ -42,6 +42,31 @@ function createCommandOptions(builder) {
         .setName('note')
         .setDescription('Game mode / note (e.g. Ranked Ascendant+, Chill Unrated, Swiftplay)')
         .setRequired(false)
+    )
+    .addStringOption(option =>
+      option
+        .setName('ping_target')
+        .setDescription('Who to ping: everyone, role, only on time, or silent (Default: everyone)')
+        .setRequired(false)
+        .addChoices(
+          { name: '@everyone (Ping all channel members)', value: 'everyone' },
+          { name: 'Target Role only', value: 'role' },
+          { name: 'Only on time (No initial ping, notify prior to match)', value: 'only_on_time' },
+          { name: 'Silent (No pings at all)', value: 'none' }
+        )
+    )
+    .addStringOption(option =>
+      option
+        .setName('reminder_prior')
+        .setDescription('When to ping unresponsive users before match (Default: 30m prior)')
+        .setRequired(false)
+        .addChoices(
+          { name: '30 minutes before match (Default)', value: '30m' },
+          { name: '15 minutes before match', value: '15m' },
+          { name: '45 minutes before match', value: '45m' },
+          { name: '1 hour before match', value: '1h' },
+          { name: 'Disabled (No reminder ping)', value: 'off' }
+        )
     );
 }
 
@@ -101,11 +126,20 @@ function buildCreateSessionModal() {
     .setPlaceholder('Ranked Ascendant/Immortal')
     .setRequired(false);
 
+  const pingSettingsInput = new TextInputBuilder()
+    .setCustomId('input_ping_settings')
+    .setLabel('Ping: everyone, role, only on time | 30m')
+    .setStyle(TextInputStyle.Short)
+    .setPlaceholder('everyone, 30m (or: only on time, 15m, off)')
+    .setValue('everyone, 30m')
+    .setRequired(false);
+
   modal.addComponents(
     new ActionRowBuilder().addComponents(partyTimeInput),
     new ActionRowBuilder().addComponents(deadlineInput),
     new ActionRowBuilder().addComponents(partySizeInput),
-    new ActionRowBuilder().addComponents(noteInput)
+    new ActionRowBuilder().addComponents(noteInput),
+    new ActionRowBuilder().addComponents(pingSettingsInput)
   );
 
   return modal;

@@ -214,6 +214,32 @@
           <span class="form-hint">Mentions like @everyone or user tags are strictly blocked to prevent spam.</span>
         </div>
 
+        <!-- Ping Target & Reminder Notification Settings -->
+        <div class="form-row">
+          <div class="form-group col-6">
+            <label class="form-label" for="pingTargetSelect">PING TARGET (CREATION)</label>
+            <select id="pingTargetSelect" class="form-select">
+              <option value="everyone" selected>@everyone (All Channel Members)</option>
+              <option value="role">Target Role Only</option>
+              <option value="only_on_time">Only on time (No initial ping, notify prior)</option>
+              <option value="none">Silent (No pings at all)</option>
+            </select>
+            <span class="form-hint">Controls who receives the initial announcement ping.</span>
+          </div>
+
+          <div class="form-group col-6">
+            <label class="form-label" for="reminderPriorSelect">REMINDER PRIOR TO MATCH</label>
+            <select id="reminderPriorSelect" class="form-select">
+              <option value="30m" selected>30 minutes before (Default)</option>
+              <option value="15m">15 minutes before</option>
+              <option value="45m">45 minutes before</option>
+              <option value="1h">1 hour before</option>
+              <option value="off">Disabled (No reminder ping)</option>
+            </select>
+            <span class="form-hint">Auto-pings users in the channel who haven't responded yet.</span>
+          </div>
+        </div>
+
         <div class="modal-footer">
           <button type="button" class="btn btn-secondary" id="cancelModalBtn">Cancel</button>
           <button type="submit" class="btn btn-primary" id="submitCreateBtn">
