@@ -10,6 +10,18 @@ const { buildSessionMessagePayload } = require('./embedBuilder');
 const { buildCreateSessionModal } = require('./commands');
 const { sanitizeNote } = require('../server/auth');
 
+const reminderMemeUrls = [
+  'https://klipy.com/gifs/psyhodelik-psyhodelik-vous-etes-ou-1',
+  'https://klipy.com/gifs/avengers-assemble-11',
+  'https://klipy.com/gifs/tpmp-paf-21'
+];
+
+const flopMemeUrls = [
+  'https://klipy.com/gifs/lilm3gan',
+  'https://klipy.com/gifs/flop-flops',
+  'https://klipy.com/gifs/lalakers-los-angeles'
+];
+
 function isChannelAllowed(channelId) {
   const allowed = process.env.ALLOWED_CHANNEL_IDS;
   if (!allowed || !allowed.trim()) return true;
@@ -502,6 +514,7 @@ async function sendChannelReminder(client, session, config = {}) {
         `⏰ **Match Start:** <t:${partyUnix}:t> (<t:${partyUnix}:F>)\n\n` +
         `Please cast your vote so the squad can lock in the roster!`
       )
+      .setImage(reminderMemeUrls[Math.floor(Math.random() * reminderMemeUrls.length)])
       .setFooter({ text: `Valobot Reminder Protocol • Auto-ping ${reminderLabel} prior` });
 
     const components = [];
@@ -530,6 +543,40 @@ async function sendChannelReminder(client, session, config = {}) {
     console.log(`📢 [Discord Bot] Pinged ${unresponsiveIds.length} unresponsive user(s) 30m prior to session ${session.id}`);
   } catch (err) {
     console.error(`❌ [Discord Bot] Failed to send 30m reminder for session ${session.id}:`, err);
+  }
+}
+
+async function sendPartyStartResult(client, session) {
+  try {
+    if (!session.channelId || session.status === 'cancelled') return;
+    const channel = await client.channels.fetch(session.channelId).catch(() => null);
+    if (!channel || !channel.isTextBased()) return;
+
+    const roster = sessionManager.calculateRosters(session);
+    const partySize = session.partySize || 5;
+    if (roster.team1.length >= partySize) {
+      console.log(`✅ [Match Start] Session ${session.id} has enough players (${roster.team1.length}/${partySize}).`);
+      return;
+    }
+
+    const mentions = roster.team1.map(member => `<@${member.userId}>`).join(' ');
+    await channel.send({
+      content: `💀 **FLOP DU MATCH** — seulement ${roster.team1.length}/${partySize} joueur(s) présent(s) à l'heure prévue. ${mentions}`.trim(),
+      embeds: [
+        new EmbedBuilder()
+          .setColor(0x2b141a)
+          .setTitle('💀 Match annulé : pas assez de joueurs')
+          .setDescription(
+            `La partie **${session.note || 'Competitive Stack'}** devait commencer maintenant, ` +
+            `mais il manque des joueurs (${roster.team1.length}/${partySize}).`
+          )
+          .setImage(flopMemeUrls[Math.floor(Math.random() * flopMemeUrls.length)])
+          .setFooter({ text: 'Valobot • Match flop' })
+      ]
+    });
+    console.log(`💀 [Match Start] Sent flop meme for session ${session.id}: ${roster.team1.length}/${partySize}.`);
+  } catch (err) {
+    console.error(`❌ [Match Start] Failed to send flop meme for session ${session.id}:`, err);
   }
 }
 
@@ -593,6 +640,7 @@ module.exports = {
   handleButton,
   updateDiscordMessage,
   sendChannelReminder,
+  sendPartyStartResult,
   getUnresponsiveChannelMembers,
   parsePingSettingsInput,
   handleAutocomplete

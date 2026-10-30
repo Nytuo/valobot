@@ -1,6 +1,6 @@
 const { Client, GatewayIntentBits, REST, Routes } = require('discord.js');
 const { commands } = require('./commands');
-const { handleCommand, handleModalSubmit, handleButton, updateDiscordMessage, sendChannelReminder, handleAutocomplete } = require('./handlers');
+const { handleCommand, handleModalSubmit, handleButton, updateDiscordMessage, sendChannelReminder, sendPartyStartResult, handleAutocomplete } = require('./handlers');
 const sessionManager = require('../services/sessionManager');
 
 function createDiscordBot(config) {
@@ -108,6 +108,10 @@ function createDiscordBot(config) {
   // 30m Prior Reminder Event
   sessionManager.on('sessionReminder', async (session) => {
     await sendChannelReminder(client, session, config);
+  });
+
+  sessionManager.on('sessionPartyStart', async (session) => {
+    await sendPartyStartResult(client, session);
   });
 
   return {
