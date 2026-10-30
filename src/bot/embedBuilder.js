@@ -154,12 +154,10 @@ function buildSessionMessagePayload(session, roster, webBaseUrl = 'https://valob
 
   // Unresponsive / Didn't respond list
   if (roster.unresponsive && roster.unresponsive.length > 0) {
-    const maxShow = 8;
-    const shown = roster.unresponsive.slice(0, maxShow).map(id => `<@${id}>`);
-    const extra = roster.unresponsive.length > maxShow ? ` +${roster.unresponsive.length - maxShow} more` : '';
+    const shown = roster.unresponsive.map(id => `<@${id}>`);
     embed.addFields({
       name: `⏳ Didn't Respond (${roster.unresponsive.length})`,
-      value: `${shown.join(', ')}${extra}`,
+      value: shown.join(', '),
       inline: false
     });
   }

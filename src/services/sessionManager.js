@@ -46,6 +46,7 @@ class SessionManager extends EventEmitter {
     this.sessions = loadSessions();
     this.timers = new Map();
     this.reminderTimers = new Map();
+    this.partyTimers = new Map();
     this.purgeUnloggedVotes();
     this.fixActiveSessionTimezones();
     this.restoreTimers();
@@ -240,6 +241,7 @@ class SessionManager extends EventEmitter {
       cancelledBy: null,
       cancelledAt: null,
       reminderSent: Boolean(options.reminderSent),
+      partyStartSent: Boolean(options.partyStartSent),
       pingTarget: options.pingTarget || 'everyone', // 'everyone' | 'role' | 'only_on_time' | 'none'
       reminderPrior: options.reminderPrior || '30m', // '30m' | '15m' | '45m' | '1h' | 'off'
       votes: {},
@@ -266,6 +268,7 @@ class SessionManager extends EventEmitter {
     this.persist();
     this.scheduleDeadline(session);
     this.scheduleReminder(session);
+    this.schedulePartyStart(session);
     this.emit('sessionCreated', session);
 
     return session;
@@ -380,6 +383,10 @@ class SessionManager extends EventEmitter {
     if (this.reminderTimers.has(sessionId)) {
       clearTimeout(this.reminderTimers.get(sessionId));
       this.reminderTimers.delete(sessionId);
+    }
+    if (this.partyTimers.has(sessionId)) {
+      clearTimeout(this.partyTimers.get(sessionId));
+      this.partyTimers.delete(sessionId);
     }
 
     this.persist();
@@ -512,6 +519,28 @@ class SessionManager extends EventEmitter {
       this.reminderTimers.delete(session.id);
     }
 
+    schedulePartyStart(session) {
+      if (session.status === 'cancelled' || session.partyStartSent) return;
+
+      if (this.partyTimers.has(session.id)) {
+        clearTimeout(this.partyTimers.get(session.id));
+        this.partyTimers.delete(session.id);
+      }
+
+      const msUntilParty = Math.max(0, session.partyTimestamp - Date.now());
+      const timer = setTimeout(() => {
+        if (session.status !== 'cancelled' && !session.partyStartSent) {
+          session.partyStartSent = true;
+          this.persist();
+          console.log(`🎮 [SessionManager] Emitting match start event for session ${session.id}`);
+          this.emit('sessionPartyStart', session);
+        }
+        this.partyTimers.delete(session.id);
+      }, msUntilParty);
+
+      this.partyTimers.set(session.id, timer);
+    }
+
     // If notifications are disabled or pingTarget is none
     if (session.pingTarget === 'none' || session.reminderPrior === 'off') return;
 
@@ -552,6 +581,7 @@ class SessionManager extends EventEmitter {
       if (session.status === 'active') {
         this.scheduleDeadline(session);
         this.scheduleReminder(session);
+        this.schedulePartyStart(session);
       }
     }
   }
