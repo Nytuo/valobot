@@ -36,6 +36,14 @@ server.listen(PORT, '0.0.0.0', async () => {
   await bot.start();
 });
 
+// A stray rejected promise must not take the bot down (or leak details to the user)
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection:', reason instanceof Error ? reason.message : reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught exception:', err);
+});
+
 // Graceful shutdown
 process.on('SIGINT', () => {
   console.log('\n🛑 Shutting down Valobot...');

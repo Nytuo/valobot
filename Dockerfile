@@ -17,13 +17,18 @@ RUN apk add --no-cache \
     font-noto \
     font-freefont \
     tzdata \
+    su-exec \
     && fc-cache -f
 
 COPY package*.json ./
 
-RUN npm ci --only=production
+RUN npm ci --omit=dev && npm cache clean --force
 
 COPY . .
+
+# The entrypoint fixes ownership of the data volume, then drops to the unprivileged "node" user
+RUN mkdir -p /app/data && chown -R node:node /app/data \
+    && sed -i 's/\r$//' /app/docker-entrypoint.sh && chmod +x /app/docker-entrypoint.sh
 
 # Dynamic port from build args or runtime environment
 ARG PORT=3000
@@ -32,4 +37,5 @@ ENV PORT=${PORT}
 
 EXPOSE ${PORT}
 
+ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["node", "src/index.js"]

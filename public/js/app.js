@@ -29,6 +29,7 @@ const submitCreateBtn = document.getElementById('submitCreateBtn');
 
 // WebSocket Setup
 function initWebSocket() {
+  if (socket && socket.readyState <= 1) return; // already connecting / open
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const wsUrl = `${protocol}//${window.location.host}/ws`;
 
@@ -42,7 +43,8 @@ function initWebSocket() {
   socket.onclose = () => {
     botStatusBadge.className = 'status-indicator offline';
     botStatusText.textContent = 'DISCONNECTED';
-    setTimeout(initWebSocket, 3000);
+    // The socket only accepts signed-in users: don't hammer the server when logged out
+    if (currentUser) setTimeout(initWebSocket, 3000);
   };
 
   socket.onerror = () => {
@@ -103,6 +105,8 @@ async function checkAuth() {
       loginRequiredNotice.style.display = 'none';
       submitCreateBtn.disabled = false;
       await fetchGuilds();
+      fetchSessions();
+      initWebSocket();
     } else {
       currentUser = null;
       renderAuthGuest();
@@ -119,7 +123,7 @@ async function checkAuth() {
 function renderAuthUser(user) {
   authWidget.innerHTML = `
     <div class="user-pill">
-      ${user.avatar ? `<img src="${user.avatar}" class="user-avatar-small" alt="${escapeHtml(user.username)}" />` : ''}
+      ${user.avatar ? `<img src="${escapeHtml(user.avatar)}" class="user-avatar-small" alt="${escapeHtml(user.username)}" />` : ''}
       <span class="user-name-small">${escapeHtml(user.displayName || user.username)}</span>
       <button class="btn btn-secondary btn-sm" id="logoutBtn" style="padding: 0.15rem 0.5rem; font-size: 0.7rem; margin-left: 0.2rem;">Logout</button>
     </div>
@@ -145,7 +149,7 @@ async function fetchStatus() {
     const res = await fetch('/api/status');
     const data = await res.json();
     if (data.botConnected) {
-      botStatusText.textContent = `BOT READY: ${data.botTag}`;
+      botStatusText.textContent = data.botTag ? `BOT READY: ${data.botTag}` : 'BOT READY';
       botGuildsCountEl.textContent = data.guildCount || 0;
     } else {
       botStatusText.textContent = 'WEB SERVER ONLINE';
@@ -209,7 +213,8 @@ async function fetchGuilds() {
 async function fetchSessions() {
   try {
     const res = await fetch('/api/sessions');
-    sessions = await res.json();
+    const list = res.ok ? await res.json() : [];
+    sessions = Array.isArray(list) ? list : [];
     renderSessions();
   } catch (err) {
     console.error('Failed to load sessions:', err);
@@ -251,7 +256,7 @@ function renderSessions() {
 
   sessions.forEach(session => {
     const isCancelled = session.status === 'cancelled';
-    const isLocked = session.status === 'locked';
+    const isLocked = session.status === 'locked' && (session.partyStartSent || Date.now() >= session.partyTimestamp);
     const partySize = session.partySize || 5;
     const roster = session.roster || {
       team1: [],
@@ -818,15 +823,23 @@ const urlParams = new URLSearchParams(window.location.search);
 if (urlParams.get('login') === 'success') {
   showToast('🎮 Logged in with Discord successfully!');
   window.history.replaceState({}, document.title, window.location.pathname);
+} else if (urlParams.get('riot')) {
+  showToast(urlParams.get('riot') === 'linked'
+    ? '✅ Compte Riot lié ! Tu apparaîtras dans les bilans.'
+    : 'Aucune connexion Riot Games trouvée sur ton profil Discord. Ajoute-la dans Paramètres → Connexions ou utilise /valolink riot_id:Pseudo#TAG.', urlParams.get('riot') === 'linked' ? 'success' : 'error');
+  window.history.replaceState({}, document.title, window.location.pathname);
 } else if (urlParams.get('error')) {
-  showToast(`Login failed: ${urlParams.get('error')}`, 'error');
+  const loginErrors = {
+    login_failed: 'Discord login failed, please try again.',
+    invalid_state: 'Login session expired, please try again.',
+    missing_code: 'Discord did not return a login code.'
+  };
+  showToast(loginErrors[urlParams.get('error')] || 'Login failed.', 'error');
   window.history.replaceState({}, document.title, window.location.pathname);
 }
 
 // Initial boot
 fetchStatus();
-checkAuth();
-fetchSessions();
-initWebSocket();
+checkAuth(); // loads sessions and opens the live socket once signed in
 
 setInterval(renderSessions, 10000);

@@ -40,10 +40,17 @@ function parseReminderMinutes(str) {
   return 30;
 }
 
+const MAX_ADVANCE_MS = 14 * 24 * 60 * 60 * 1000; // matches must start within 14 days (setTimeout limit is ~24.8 days)
+const MAX_ACTIVE_PER_CREATOR = 3;
+const MIN_LEAD_MS = 3 * 60 * 1000;
+const STALE_PARTY_MS = 2 * 60 * 60 * 1000; // a match older than this at startup is not announced any more
+const PING_TARGETS = ['everyone', 'role', 'only_on_time', 'none'];
+const REMINDER_PRIORS = ['off', '5m', '10m', '15m', '30m', '45m', '1h'];
+
 class SessionManager extends EventEmitter {
   constructor() {
     super();
-    this.sessions = loadSessions();
+    this.sessions = Object.assign(Object.create(null), loadSessions());
     this.timers = new Map();
     this.reminderTimers = new Map();
     this.partyTimers = new Map();
@@ -79,7 +86,7 @@ class SessionManager extends EventEmitter {
 
   // Parse human time strings like "now", "21:00", "14:00", "tomorrow 20h", "friday 21:00", "in 1h"
   parseTimeString(timeStr, baseDate = new Date()) {
-    if (!timeStr) return null;
+    if (!timeStr || typeof timeStr !== 'string' || timeStr.length > 64) return null;
     timeStr = timeStr.trim();
 
     // 0. "now" format
@@ -202,14 +209,34 @@ class SessionManager extends EventEmitter {
   createSession(options) {
     const id = options.id || `valo_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
     const now = new Date();
+    const creatorId = options.creator?.id || 'sender_1';
 
-    const partyDate = options.partyTimestamp ?
-      new Date(options.partyTimestamp) :
+    const activeByCreator = this.getActiveSessions().filter(s => s.creator?.id === creatorId).length;
+    if (activeByCreator >= MAX_ACTIVE_PER_CREATOR) {
+      throw new Error(`Tu as déjà ${MAX_ACTIVE_PER_CREATOR} sessions actives. Annule-en une avant d'en lancer une autre.`);
+    }
+
+    const requestedParty = Number(options.partyTimestamp);
+    let partyDate = Number.isFinite(requestedParty) && requestedParty > 0 ?
+      new Date(requestedParty) :
       (this.parseTimeString(options.partyTime, now) || new Date(now.getTime() + 60 * 60 * 1000));
 
-    const deadlineDate = options.voteDeadlineTimestamp ?
-      new Date(options.voteDeadlineTimestamp) :
+    // Minimum lead time so the "enough players?" check never fires before anyone could vote
+    if (!isNaN(partyDate.getTime()) && partyDate.getTime() < now.getTime() + MIN_LEAD_MS) {
+      partyDate = new Date(now.getTime() + MIN_LEAD_MS);
+    }
+
+    if (isNaN(partyDate.getTime()) || partyDate.getTime() < now.getTime() - 30 * 60 * 1000 || partyDate.getTime() > now.getTime() + MAX_ADVANCE_MS) {
+      throw new Error("L'heure du match doit être comprise dans les 14 prochains jours.");
+    }
+
+    const requestedDeadline = Number(options.voteDeadlineTimestamp);
+    let deadlineDate = Number.isFinite(requestedDeadline) && requestedDeadline > 0 ?
+      new Date(requestedDeadline) :
       this.computeDeadline(partyDate, options.voteDeadline, now);
+    if (isNaN(deadlineDate.getTime()) || deadlineDate.getTime() > partyDate.getTime()) {
+      deadlineDate = this.computeDeadline(partyDate, null, now);
+    }
 
     const partySize = [2, 3, 5].includes(Number(options.partySize)) ? Number(options.partySize) : 5;
 
@@ -219,7 +246,7 @@ class SessionManager extends EventEmitter {
       channelId: options.channelId || null,
       messageId: options.messageId || null,
       creator: {
-        id: options.creator?.id || 'sender_1',
+        id: creatorId,
         username: options.creator?.username || 'Sender',
         displayName: options.creator?.displayName || options.creator?.username || 'Sender',
         avatar: options.creator?.avatar || null
@@ -239,11 +266,12 @@ class SessionManager extends EventEmitter {
       createdAt: now.getTime(),
       status: 'active', // 'active' | 'locked' | 'cancelled'
       cancelledBy: null,
+      cancelReason: null,
       cancelledAt: null,
       reminderSent: Boolean(options.reminderSent),
       partyStartSent: Boolean(options.partyStartSent),
-      pingTarget: options.pingTarget || 'everyone', // 'everyone' | 'role' | 'only_on_time' | 'none'
-      reminderPrior: options.reminderPrior || '30m', // '30m' | '15m' | '45m' | '1h' | 'off'
+      pingTarget: PING_TARGETS.includes(options.pingTarget) ? options.pingTarget : 'everyone',
+      reminderPrior: REMINDER_PRIORS.includes(options.reminderPrior) ? options.reminderPrior : '30m',
       votes: {},
       history: []
     };
@@ -275,7 +303,14 @@ class SessionManager extends EventEmitter {
   }
 
   getSession(id) {
-    return this.sessions[id] || null;
+    // own-property check: ids such as "constructor" or "__proto__" must never resolve
+    return typeof id === 'string' && Object.prototype.hasOwnProperty.call(this.sessions, id) ? this.sessions[id] : null;
+  }
+
+  // Shape sent to web clients: roster included, internal candidate list (all channel member ids) left out
+  toPublic(session) {
+    const { targetMemberIds, ...rest } = session;
+    return { ...rest, roster: this.calculateRosters(session) };
   }
 
   getAllSessions() {
@@ -311,9 +346,11 @@ class SessionManager extends EventEmitter {
   }
 
   castVote(sessionId, user, voteType, meta = {}) {
-    const session = this.sessions[sessionId];
+    const session = this.getSession(sessionId);
     if (!session) throw new Error('Session not found');
-    if (session.status !== 'active') throw new Error(`Cannot vote on a ${session.status} session`);
+    if (!this.isVotingOpen(session)) {
+      throw new Error(session.status === 'locked' ? 'Le match a déjà commencé, les votes sont clos.' : `Cannot vote on a ${session.status} session`);
+    }
 
     // Guard: Prevent unauthenticated / anonymous web votes
     if (meta.source === 'web' && (!user || !user.id || user.id.startsWith('web_') || user.username === 'Web Player')) {
@@ -321,6 +358,7 @@ class SessionManager extends EventEmitter {
     }
 
     const now = Date.now();
+    const previousStatus = session.votes[user.id]?.status || null;
     const validVotes = ['sure', 'maybe', 'if_last', 'backup', 'no', 'remove'];
     if (!validVotes.includes(voteType)) {
       throw new Error(`Invalid vote type: ${voteType}`);
@@ -353,16 +391,18 @@ class SessionManager extends EventEmitter {
     }
 
     this.persist();
-    this.emit('sessionUpdated', session, { user, voteType, ...meta });
+    const joined = ['sure', 'maybe', 'if_last', 'backup'].includes(voteType) && previousStatus !== voteType;
+    this.emit('sessionUpdated', session, { user, voteType, previousStatus, joined, ...meta });
     return session;
   }
 
-  cancelSession(sessionId, cancelledByUser) {
-    const session = this.sessions[sessionId];
+  cancelSession(sessionId, cancelledByUser, reason = null) {
+    const session = this.getSession(sessionId);
     if (!session) throw new Error('Session not found');
     if (session.status === 'cancelled') return session;
 
     session.status = 'cancelled';
+    session.cancelReason = reason;
     session.cancelledAt = Date.now();
     session.cancelledBy = {
       id: cancelledByUser?.id || 'admin',
@@ -395,7 +435,7 @@ class SessionManager extends EventEmitter {
   }
 
   lockSession(sessionId) {
-    const session = this.sessions[sessionId];
+    const session = this.getSession(sessionId);
     if (!session) return null;
     if (session.status !== 'active') return session;
 
@@ -451,24 +491,21 @@ class SessionManager extends EventEmitter {
       const currentTeam = [...remainingSure];
       currentTeam.forEach(p => usedUserIds.add(p.userId));
 
-      // Can we complete this team with "if a last" players?
-      // "If a last" players join specifically if needed to complete the stack!
-      const neededCount = partySize - currentTeam.length;
-      if (neededCount === 1 && ifLastVotes.length > 0) {
-        // Exactly 1 needed, and we have an "if a last" player ready!
-        const filler = ifLastVotes.find(v => !usedUserIds.has(v.userId));
-        if (filler) {
-          currentTeam.push(filler);
-          usedUserIds.add(filler.userId);
-        }
+      // Complete the team while slots remain: "if a last" players first, then "if needed" backups
+      for (const filler of [...ifLastVotes, ...backupVotes]) {
+        if (currentTeam.length >= partySize) break;
+        if (usedUserIds.has(filler.userId)) continue;
+        currentTeam.push(filler);
+        usedUserIds.add(filler.userId);
       }
 
       teams.push(currentTeam);
     }
 
-    // Remaining 'sure' that couldn't be placed (if any), 'if_last' not used, and 'backup'
+    // 'if_last' and 'backup' players not needed to fill a slot stay in reserve
     const unusedIfLast = ifLastVotes.filter(v => !usedUserIds.has(v.userId));
-    const allBackups = [...backupVotes, ...unusedIfLast];
+    const unusedBackups = backupVotes.filter(v => !usedUserIds.has(v.userId));
+    const allBackups = [...unusedBackups, ...unusedIfLast];
 
     // Didn't respond (from targetMemberIds if provided)
     const targetMemberIds = session.targetMemberIds || [];
@@ -519,28 +556,6 @@ class SessionManager extends EventEmitter {
       this.reminderTimers.delete(session.id);
     }
 
-    schedulePartyStart(session) {
-      if (session.status === 'cancelled' || session.partyStartSent) return;
-
-      if (this.partyTimers.has(session.id)) {
-        clearTimeout(this.partyTimers.get(session.id));
-        this.partyTimers.delete(session.id);
-      }
-
-      const msUntilParty = Math.max(0, session.partyTimestamp - Date.now());
-      const timer = setTimeout(() => {
-        if (session.status !== 'cancelled' && !session.partyStartSent) {
-          session.partyStartSent = true;
-          this.persist();
-          console.log(`🎮 [SessionManager] Emitting match start event for session ${session.id}`);
-          this.emit('sessionPartyStart', session);
-        }
-        this.partyTimers.delete(session.id);
-      }, msUntilParty);
-
-      this.partyTimers.set(session.id, timer);
-    }
-
     // If notifications are disabled or pingTarget is none
     if (session.pingTarget === 'none' || session.reminderPrior === 'off') return;
 
@@ -566,9 +581,52 @@ class SessionManager extends EventEmitter {
     }
   }
 
+  schedulePartyStart(session) {
+    if (session.status === 'cancelled' || session.partyStartSent) return;
+
+    if (this.partyTimers.has(session.id)) {
+      clearTimeout(this.partyTimers.get(session.id));
+      this.partyTimers.delete(session.id);
+    }
+
+    const msUntilParty = Math.max(0, session.partyTimestamp - Date.now());
+
+    if (Date.now() - session.partyTimestamp > STALE_PARTY_MS) {
+      session.partyStartSent = true;
+      this.persist();
+      console.log(`🕰️ [SessionManager] Session ${session.id} ended while the bot was offline, closing it silently.`);
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      if (session.status !== 'cancelled' && !session.partyStartSent) {
+        session.partyStartSent = true;
+        this.persist();
+        // Not enough players when the match is due: the party is cancelled automatically
+        const roster = this.calculateRosters(session);
+        if (roster.team1.length < (session.partySize || 5)) {
+          console.log(`🛑 [SessionManager] Auto-cancelling session ${session.id}: ${roster.team1.length}/${session.partySize} players`);
+          this.cancelSession(session.id, { id: 'system', username: 'Valobot', displayName: 'Valobot' }, 'not_enough_players');
+        }
+        console.log(`🎮 [SessionManager] Emitting match start event for session ${session.id}`);
+        this.emit('sessionPartyStart', session);
+      }
+      this.partyTimers.delete(session.id);
+    }, msUntilParty);
+
+    this.partyTimers.set(session.id, timer);
+  }
+
+  // Votes stay open after the vote deadline (status "locked") until the real match time
+  isVotingOpen(session) {
+    if (!session || session.status === 'cancelled') return false;
+    if (session.status === 'active') return true;
+    return session.status === 'locked' && !session.partyStartSent && Date.now() < session.partyTimestamp;
+  }
+
   // Force trigger reminder (useful for testing or manual prompt)
   triggerReminder(sessionId) {
-    const session = this.sessions[sessionId];
+    const session = this.getSession(sessionId);
     if (!session || session.status !== 'active') return false;
     session.reminderSent = true;
     this.persist();
@@ -581,6 +639,8 @@ class SessionManager extends EventEmitter {
       if (session.status === 'active') {
         this.scheduleDeadline(session);
         this.scheduleReminder(session);
+        this.schedulePartyStart(session);
+      } else if (session.status === 'locked') {
         this.schedulePartyStart(session);
       }
     }

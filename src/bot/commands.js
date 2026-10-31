@@ -95,6 +95,39 @@ const youwanttoplayCommand = createCommandOptions(
     .setDescription('Create a Valorant stacking vote session')
 );
 
+const regionChoices = [
+  { name: 'Europe (eu)', value: 'eu' },
+  { name: 'North America (na)', value: 'na' },
+  { name: 'Asia Pacific (ap)', value: 'ap' },
+  { name: 'Korea (kr)', value: 'kr' },
+  { name: 'Latin America (latam)', value: 'latam' },
+  { name: 'Brazil (br)', value: 'br' }
+];
+
+// 4. /valolink : link a Riot ID so rank & match stats can be reported
+const valolinkCommand = new SlashCommandBuilder()
+  .setName('valolink')
+  .setDescription('Link your Riot account (no argument = one-click link from your Discord profile)')
+  .setDMPermission(false)
+  .addStringOption(option =>
+    option.setName('riot_id').setDescription('Your Riot ID, e.g. Pseudo#TAG (leave empty to link from your Discord profile)').setRequired(false).setMaxLength(32)
+  )
+  .addStringOption(option =>
+    option.setName('region').setDescription('Your Valorant region (default: server setting)').setRequired(false).addChoices(...regionChoices)
+  );
+
+// 5. /valounlink : remove the link and the stored data
+const valounlinkCommand = new SlashCommandBuilder()
+  .setName('valounlink')
+  .setDescription('Unlink your Riot ID and delete your stored data')
+  .setDMPermission(false);
+
+// 6. /valoresult : post the stats recap of the latest finished party of this channel
+const valoresultCommand = new SlashCommandBuilder()
+  .setName('valoresult')
+  .setDescription('Games are over? Post the rank & stats recap of the latest party in this channel')
+  .setDMPermission(false);
+
 // Interactive Modal for the sender UI
 function buildCreateSessionModal() {
   const modal = new ModalBuilder()
@@ -150,6 +183,6 @@ function buildCreateSessionModal() {
 }
 
 module.exports = {
-  commands: [valoCommand, valorantCommand, youwanttoplayCommand],
+  commands: [valoCommand, valorantCommand, youwanttoplayCommand, valolinkCommand, valounlinkCommand, valoresultCommand],
   buildCreateSessionModal
 };

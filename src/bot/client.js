@@ -1,6 +1,7 @@
 const { Client, GatewayIntentBits, REST, Routes } = require('discord.js');
 const { commands } = require('./commands');
-const { handleCommand, handleModalSubmit, handleButton, updateDiscordMessage, sendChannelReminder, sendPartyStartResult, handleAutocomplete } = require('./handlers');
+const { handleCommand, handleModalSubmit, handleButton, updateDiscordMessage, repostSessionMessage, sendChannelReminder, sendPartyStartResult, handleAutocomplete } = require('./handlers');
+const { captureBeforeStats, handleResultRequest, handleLinkCommand, handleUnlinkCommand } = require('./statsReport');
 const sessionManager = require('../services/sessionManager');
 
 function createDiscordBot(config) {
@@ -17,15 +18,21 @@ function createDiscordBot(config) {
     };
   }
 
-  // Only standard GatewayIntentBits.Guilds is required for slash commands, embeds & buttons.
-  // This does NOT require any privileged intents (no "Used disallowed intents" error).
-  const client = new Client({
-    intents: [
-      GatewayIntentBits.Guilds
-    ]
-  });
+  // Guilds is enough for slash commands, embeds & buttons. GuildMembers (privileged) lets the bot list
+  // every member who can see a channel, which the "didn't respond" list needs. If the intent is not enabled
+  // in the Developer Portal, we log in again without it instead of crashing.
+  let membersIntent = process.env.DISABLE_MEMBERS_INTENT !== 'true';
+  let client = null;
 
-  client.once('ready', async () => {
+  const buildClient = () => {
+    const intents = [GatewayIntentBits.Guilds];
+    if (membersIntent) intents.push(GatewayIntentBits.GuildMembers);
+    client = new Client({ intents });
+    registerClientHandlers(client);
+  };
+
+  const registerClientHandlers = (client) => {
+  client.once('clientReady', async () => {
     console.log(`🤖 [Discord Bot] Logged in as ${client.user.tag}!`);
     console.log(`📡 [Discord Bot] Serving ${client.guilds.cache.size} guild(s).`);
 
@@ -42,10 +49,17 @@ function createDiscordBot(config) {
           console.log('🌍 [Discord Bot] Registering global application commands...');
           await rest.put(Routes.applicationCommands(clientId), { body: commandData });
         }
-        console.log('✅ [Discord Bot] Slash commands registered successfully (/valo, /valorant, /youwanttoplay)!');
+        console.log('✅ [Discord Bot] Slash commands registered successfully (' + commands.map(c => "/" + c.name).join(", ") + ')!');
       } catch (err) {
         console.error('❌ [Discord Bot] Failed to register slash commands:', err);
       }
+    }
+
+    if (membersIntent) {
+      for (const [, guild] of client.guilds.cache) {
+        await guild.members.fetch().catch(err => console.warn(`⚠️ [Discord Bot] Could not load members of ${guild.name}: ${err.message}`));
+      }
+      console.log('👥 [Discord Bot] Guild members loaded.');
     }
 
     // Refresh active Discord messages (rewrites timezones and applies vote purges to Discord feed)
@@ -62,6 +76,13 @@ function createDiscordBot(config) {
     }
   });
 
+  client.on('guildCreate', (guild) => {
+    if (membersIntent) guild.members.fetch().catch(() => {});
+  });
+
+  client.on('error', (err) => console.error('❌ [Discord Bot] Client error:', err.message));
+  client.on('warn', (msg) => console.warn('⚠️ [Discord Bot]', msg));
+
   // Interaction Router
   client.on('interactionCreate', async (interaction) => {
     try {
@@ -74,6 +95,12 @@ function createDiscordBot(config) {
         const cmdName = interaction.commandName;
         if (['valo', 'valorant', 'youwanttoplay'].includes(cmdName)) {
           await handleCommand(interaction, config);
+        } else if (cmdName === 'valolink') {
+          await handleLinkCommand(interaction, config);
+        } else if (cmdName === 'valounlink') {
+          await handleUnlinkCommand(interaction);
+        } else if (cmdName === 'valoresult') {
+          await handleResultRequest(interaction);
         }
       } else if (interaction.isModalSubmit()) {
         await handleModalSubmit(interaction, config);
@@ -91,10 +118,18 @@ function createDiscordBot(config) {
     }
   });
 
+  };
+
+  buildClient();
+
   // Sync session events back to Discord messages
   sessionManager.on('sessionUpdated', async (session, meta) => {
     if (meta?.source === 'discord_button') return;
-    await updateDiscordMessage(client, session, config);
+    if (meta?.joined) {
+      await repostSessionMessage(client, session, config, meta.user);
+    } else {
+      await updateDiscordMessage(client, session, config);
+    }
   });
 
   sessionManager.on('sessionCancelled', async (session) => {
@@ -111,19 +146,33 @@ function createDiscordBot(config) {
   });
 
   sessionManager.on('sessionPartyStart', async (session) => {
+    await updateDiscordMessage(client, session, config); // disable vote buttons at real match time
     await sendPartyStartResult(client, session);
+    await captureBeforeStats(client, session); // rank snapshot of the squad (linked players only)
   });
 
   return {
-    client,
+    get client() { return client; },
     start: async () => {
       try {
         await client.login(token);
       } catch (err) {
+        if (membersIntent && /disallowed intents/i.test(err.message)) {
+          console.warn('⚠️ [Discord Bot] "Server Members Intent" is not enabled in the Developer Portal (Bot > Privileged Gateway Intents). Retrying without it: the "didn\'t respond" list will be incomplete until you enable it.');
+          membersIntent = false;
+          try { client.destroy(); } catch {}
+          buildClient();
+          try {
+            await client.login(token);
+          } catch (retryErr) {
+            console.error('❌ [Discord Bot] Login failed:', retryErr.message);
+          }
+          return;
+        }
         console.error('❌ [Discord Bot] Login failed:', err.message);
       }
     },
-    isReady: () => client.isReady()
+    isReady: () => Boolean(client && client.isReady())
   };
 }
 

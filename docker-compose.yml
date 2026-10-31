@@ -6,8 +6,18 @@ services:
         PORT: ${PORT:-3000}
     container_name: valobot
     restart: unless-stopped
+    # Only reachable from the host itself; the public entrypoint is the Apache reverse proxy (proxy-nw)
     ports:
-      - "${PORT:-3000}:${PORT:-3000}"
+      - "127.0.0.1:${PORT:-3000}:${PORT:-3000}"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    # only what the entrypoint needs to chown ./data and drop to the "node" user; the app itself runs unprivileged
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
     env_file:
       - .env
     environment:
