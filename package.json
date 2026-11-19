@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
-    "test": "node test_valobot.js"
+    "test": "node test_valobot.js",
+    "test:stats": "node test_stats_rate_limit.js",
+    "test:stats:live": "node test_stats_rate_limit.js --live"
   },
   "keywords": [],
   "author": "",

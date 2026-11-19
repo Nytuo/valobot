@@ -9,6 +9,8 @@ const { safeName } = require('../server/auth');
 
 const EARLY_START_MS = 5 * 60 * 1000; // games launched a bit before the planned time still count
 const RESULT_COOLDOWN_MS = 45 * 1000;
+const MATCH_HISTORY_GAP_MS = 50 * 60 * 1000;
+const MAX_FALLBACK_MATCH_HISTORIES = 2;
 const NO_MENTIONS = { parse: [] };
 const FOOTER = S.footer;
 
@@ -24,7 +26,7 @@ const rankLine = (rank) => rank
   : S.unknownRank;
 
 function statsErrorText(err) {
-  if (err?.code === 'rate_limited') return S.errRateLimited;
+  if (err?.code === 'rate_limited') return S.errRateLimited(Math.max(1, Math.ceil((err.retryAfterMs || 60_000) / 1000)));
   if (err?.code === 'unauthorized') return S.errUnauthorized;
   return S.errUnavailable;
 }
@@ -121,19 +123,54 @@ function selectSquadGames(perPlayerMatches) {
     .sort((a, b) => a[1].sample.startedAt - b[1].sample.startedAt);
 }
 
+function hasMatchHistoryGap(perPlayerMatches, sinceMs, untilMs) {
+  const startedAt = [...new Set(
+    [...perPlayerMatches.values()].flatMap(matches => [...matches.values()].map(match => match.startedAt))
+  )].sort((a, b) => a - b);
+
+  let previous = sinceMs;
+  for (const time of startedAt) {
+    if (time - previous >= MATCH_HISTORY_GAP_MS) return true;
+    previous = time;
+  }
+  return Math.max(sinceMs, untilMs) - previous >= MATCH_HISTORY_GAP_MS;
+}
+
 async function buildResultEmbed(session, { allModes = false } = {}) {
+  const historyEndMs = Date.now();
   const stats = session.stats || { since: session.partyTimestamp - EARLY_START_MS, before: {}, players: sessionPlayerIds(session) };
   const playerIds = stats.players?.length ? stats.players : sessionPlayerIds(session);
   const linked = playerIds.map(id => ({ id, profile: profiles.getProfile(id) })).filter(p => p.profile);
 
   const after = new Map();
-  const perPlayer = new Map();
   for (const { id, profile } of linked) {
     after.set(id, await valorantStats.getRank(profile, { fresh: true }).catch(err => { if (err.code === 'rate_limited') throw err; return null; }));
-    const matches = await valorantStats.getMatchesSince(profile, stats.since);
-    perPlayer.set(id, allModes ? matches : matches.filter(isCompetitive));
   }
 
+  const matchesByPlayer = new Map(linked.map(({ id }) => [id, new Map()]));
+  if (linked.length > 0) {
+    const anchor = linked.find(({ id }) => id === session.creator.id) || linked[0];
+    const candidates = [anchor, ...linked.filter(player => player !== anchor)];
+    const squadProfiles = linked.map(({ profile }) => profile);
+    let historiesFetched = 0;
+
+    for (const candidate of candidates) {
+      if (historiesFetched > 0 && !hasMatchHistoryGap(matchesByPlayer, stats.since, historyEndMs)) break;
+      const history = await valorantStats.getSquadMatchesSince(candidate.profile, squadProfiles, stats.since);
+      for (const { id, profile } of linked) {
+        for (const match of history.get(profile) || []) {
+          matchesByPlayer.get(id).set(match.matchId, match);
+        }
+      }
+      historiesFetched++;
+      if (historiesFetched >= 1 + MAX_FALLBACK_MATCH_HISTORIES) break;
+    }
+  }
+
+  const perPlayer = new Map([...matchesByPlayer.entries()].map(([id, matches]) => {
+    const playerMatches = [...matches.values()];
+    return [id, allModes ? playerMatches : playerMatches.filter(isCompetitive)];
+  }));
   const games = selectSquadGames(perPlayer);
   const gameIds = new Set(games.map(([matchId]) => matchId));
 
