@@ -182,7 +182,7 @@ const embed = {
 const stats = {
   footer: "Valobot • Données HenrikDev API • Non affilié à Riot Games",
   unknownRank: "*rang inconnu*",
-  errRateLimited: "Trop de requêtes vers l'API de stats, réessaie dans une minute. « Doucement sur le clic » 🐢",
+  errRateLimited: (seconds) => `Trop de requêtes vers l'API de stats, réessaie dans ${seconds}s. « Doucement sur le clic » 🐢`,
   errUnauthorized: "La clé API de stats est invalide ou absente (admin du bot : vérifie `HENRIK_API_KEY`).",
   errUnavailable: "L'API de stats ne répond pas pour le moment. « Ça arrive aux meilleurs. » 🔧",
   notLinked: (userId) => `<@${userId}> — 🔗 pas lié (\`/valolink\`)`,

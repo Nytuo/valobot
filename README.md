@@ -167,6 +167,14 @@ Valobot can show each player's **rank, RR, K/D/A, ACS, ADR and HS%** before and 
 
 Enable with `HENRIK_API_KEY` (see [Environment Variables](#environment-variables)). Without it, the feature is simply off.
 
+On a temporary `429`, the stats client honors `Retry-After` or `X-RateLimit-Reset` and retries once when the reset is within 60 seconds; otherwise it reports the wait time.
+
+Before a request, it also checks the remaining quota headers. It conservatively estimates 2 credits for rank and `2 + size` for matches (up to 7 at `size=5`) and waits for the window reset if the estimate will not fit. The client calls are serialized; actual usage varies with HenrikDev's cache.
+
+HenrikDev does not document a multi-account batch endpoint. The match-history response does include every player in each match, so the recap queries the creator's history (or the first linked player) and reuses those match stats for the squad. Each history is capped at the five most recent matches. If a 50-minute gap remains, it checks up to two other linked players' histories. This saves calls when the squad played together, but can miss a separate game inside a shorter gap, sessions longer than five games per queried player, or games beyond those two fallbacks. Current rank is still queried per linked player.
+
+For a local live diagnostic, set `HENRIK_API_KEY` in `.env`, then pass each account as a repeated `--riot-id` option, for example `npm run test:stats:live -- --riot-id "Pseudo#TAG" --riot-id "Autre#TAG" --region eu`. It logs each API request's status, duration, and quota/cache headers, followed by a simplified seven-day summary. `npm run test:stats` runs the mocked rate-limit test without contacting HenrikDev.
+
 > Valobot isn't endorsed by Riot Games and doesn't reflect the views or opinions of Riot Games or anyone officially involved in producing or managing Riot Games properties.
 
 ---
@@ -342,7 +350,7 @@ Not needed, don't grant: Administrator, Manage Messages/Channels/Roles, Manage S
 | `DISABLE_MEMBERS_INTENT` | no | `true` to never request the Server Members Intent |
 | `HENRIK_API_KEY` | no | Enables rank & stats recaps ([key](https://docs.henrikdev.xyz)) |
 | `VALORANT_REGION` | no | Default region of linked accounts: eu, na, ap, kr, latam, br |
-| `HENRIK_MIN_INTERVAL_MS` | no | Delay between stats API calls (default 2200, free tier ≈ 30/min) |
+| `HENRIK_MIN_INTERVAL_MS` | no | Minimum delay between stats API calls (default 3000 ms); quota headers also control pacing. Use one bot instance per API key |
 
 ---
 
